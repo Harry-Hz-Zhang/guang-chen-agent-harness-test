@@ -31,7 +31,7 @@
 
 约定模型名：
 
-- 主模型：`deepseek-chat`
+- 主模型：`deepseek-flash`
 - 模型名与 base_url 必须可从环境变量覆盖：`LLM_MODEL` / `LLM_BASE_URL`
 
 ## 3. 目录约定
@@ -41,7 +41,10 @@ doc/                    PRD 与说明文档（需求原文，冻结不改）
 src/harness/            核心 runtime
   __init__.py
   __main__.py           CLI 入口（python -m harness）
+  config.py             RuntimeConfig 常量与环境变量覆盖
+  prompts.py            提示词模板集中放置
   loop.py               ReAct 主循环 + 单次请求决策轮上限
+  middleware.py         中间件基类
   llm.py                模型客户端封装
   parser.py             LLM 输出解析（思考 / 工具调用 / 最终答案）
   tools/
@@ -55,6 +58,9 @@ src/harness/            核心 runtime
   context/
     builder.py          context 组装
     compressor.py       超长压缩
+  memory/
+    store.py            长期记忆
+    summarizer.py       闲置总结
   trace.py              工具调用 trace 与日志
 tests/                  pytest 测试（与 src 镜像）
 openspec/               VSDD/OpenSpec artifacts（方案真源）
@@ -69,7 +75,7 @@ openspec/               VSDD/OpenSpec artifacts（方案真源）
 - 用 `logging` 或项目内 `trace` 模块记录，**禁止**用 `print` 做调试输出。
 - **禁止静默吞异常**：工具执行失败必须把错误信息结构化后回传给 LLM，由 LLM 决定是否重试或向用户说明。
 - 对外部输入（LLM 返回的 JSON、工具参数）一律做**显式校验**，不信任其格式。
-- 命名：模块/函数 `snake_case`，类 `PascalCase`，常量 `UPPER_SNAKE`。
+- 命名：模块/函数 `snake_case`，类 `PascalCase`，常量 `UPPER_SNAKE`。例外：测试方法名按 `openspec/changes/*/tasks.md` RED 条目规定的原名（`camelCase`）执行，保证用例与需求逐条可追溯，不作 snake_case 强求。
 - 提示词模板集中放置，不散落在业务逻辑里。
 
 ## 5. 常用命令
@@ -84,15 +90,16 @@ uv run pytest
 # 运行单个测试文件
 uv run pytest tests/test_loop.py
 
-# 启动 CLI
-uv run python -m harness
+# 启动 CLI（src 布局需 PYTHONPATH；PowerShell 先执行 $env:PYTHONPATH = "src"）
+PYTHONPATH=src uv run python -m harness
 
 # 指定 session 启动
-uv run python -m harness --session s1
+PYTHONPATH=src uv run python -m harness --session s1
 ```
 
 > 说明：本项目是**应用**不是可分发的库，`pyproject.toml` 里设了 `[tool.uv] package = false`，
-> 不走 `pip install -e .` 打包安装；`src/` 通过 pytest 的 `pythonpath = ["src"]` 进入搜索路径。
+> 不走 `pip install -e .` 打包安装；`src/` 通过 pytest 的 `pythonpath = ["src"]` 进入搜索路径，
+> 其他普通 Python 进程（如 CLI）需显式设置 `PYTHONPATH=src`（见上方启动命令）。
 
 ## 6. 提交规范
 

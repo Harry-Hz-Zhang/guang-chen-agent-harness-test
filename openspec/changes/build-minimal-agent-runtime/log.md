@@ -87,6 +87,44 @@
 | 执行模式 | 串行（Wave 1→7 顺序：T1 / T2 T4 T5 T8 / T3 T6 T12 / T7 T11 / T9 / T10 / T13），每 task：implementer 子代理（TDD）→ spec 审查子代理 + 代码质量审查子代理 → 双层回写 → 构建/测试证据 → commit gate |
 | 规划产物 commit | openspec/changes/、last-exploration-handoff.md、.vsdd-state.yaml、doc/my-plan.md（用户指定 4 项）+ AGENTS.md 未提交的术语修订（propose 阶段「去撞词」修订 E，属于规划产物同批）合并为一个 `docs:` commit |
 
+## 2026-09-24 apply（Task 1 Reverse Sync ×1）
+
+| 事件 | 说明 |
+| --- | --- |
+| 触发 | code-quality reviewer BLOCKED：①DoD 命令 `uv run python -c "import harness"` 从仓库根实测失败（`[tool.uv] package=false` + src 布局，src/ 仅经 pytest pythonpath 进搜索路径；实测 uv 0.12.9 不支持 `[tool.uv] env` 注入 PYTHONPATH）②tasks.md RED 规定的 camelCase 测试名与 AGENTS.md §4 snake_case 冲突 |
+| 修订 A（tasks.md） | T1 DoD / T13 DoD / T13 最小验证的 `uv run python …` 命令统一改为 `PYTHONPATH=src uv run python …` 形式（附 PowerShell 等价写法说明） |
+| 修订 B（AGENTS.md §4） | 命名规则加例外：测试方法名按 tasks.md RED 规定的 camelCase 原名执行（逐条可追溯），不作 snake_case 强求 |
+| 修订 C（AGENTS.md §5） | CLI 启动命令改为 `PYTHONPATH=src uv run python -m harness`（PowerShell 先 `$env:PYTHONPATH="src"`），§5 说明段补充原因 |
+| 遗留裁决 | reviewer Important「测试不密闭（未清理真实环境变量 LLM_MODEL/HARNESS_*）」退回 implementer 修复（测试补 delenv/autouse 清理）；Minor 2 条（`type` 注解可收紧 / 冗余断言）不阻断、记录在案 |
+| reverse_sync_required | 置 true → artifacts 修订完成后置 false，继续 Task 1 修复 |
+
+### Review Evidence Task 1
+- Stage: spec
+- Subagent ID / turn: ses_f2d9e7724ffeLFRYkguEF4m8iH
+- Verdict: PASS
+- Findings: 无 Critical / Important / DESIGN_ISSUE；spec 覆盖率 12/12（RED 5 + GREEN 1 + ASSERT 2 + DoD 4）；Minor 4 条（`type` 注解可收紧、负数 env 不校验、断言冗余、checkbox 未勾——由 apply 收口处理）
+
+### Review Evidence Task 1
+- Stage: code-quality
+- Subagent ID / turn: ses_f2d9e5cfdffeYZoz7EQ6uo9JZD（第 1 轮 BLOCKED：DoD 命令失败 Critical / 测试不密闭 Important / camelCase DESIGN_ISSUE）
+- Subagent ID / turn: ses_f2d94f61effe2VzRr31PQQmEh0（修复后 scoped 复审）
+- Verdict: PASS（三项逐项 ADDRESSED，无新引入问题；密闭性经污染环境复验 5 passed）
+- Findings: Minor 遗留 2 条不阻断（`type` 注解收紧 / `is not None` 冗余断言）
+
+### Build Evidence Task 1
+- 命令: `uv run pytest tests/test_config.py -q` + `$env:PYTHONPATH="src"; uv run python -c "import harness; from harness.config import RuntimeConfig; RuntimeConfig.from_env()"`
+- exit code: 0 / 0
+- 关键输出:
+  ```
+  .....                                                                    [100%]
+  pytest exit: 0
+  import OK, model = deepseek-flash
+  import exit: 0
+  ```
+- TDD 证据（implementer ses_f2da5a458ffe7T1rB0BBr72WAA + 修复轮同 session）：RED `ModuleNotFoundError: No module named 'harness'`（5 用例收集失败）→ GREEN `5 passed`；密闭性修复 RED（污染 `LLM_MODEL=m9` 后 testHarnessEnvOverride 断言 `'m9' == 'deepseek-flash'` 失败）→ GREEN（污染与干净环境均 5 passed）
+- tasks.md 双层回写: Task 1 行 `- [ ]` → `- [x]`（无 ### Task 1 细项层，仅顶层 checkbox）
+- auto_commit: true（用户 apply 指令覆盖 local.yaml 默认 false；runtime 块见 state）
+
 ## 待办
 
 - [x] design review（第 1 轮 PASS，Should Improve 4 项已修复）

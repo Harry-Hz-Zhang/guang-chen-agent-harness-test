@@ -14,7 +14,7 @@ context: |
   - Python 3.13+ / uv 管理依赖 / pytest 测试
   - LLM：DeepSeek（OpenAI 兼容协议），SDK 用官方 openai 包
   - 密钥读环境变量 DEEPSEEK_API_KEY；模型名与 base_url 可由 LLM_MODEL / LLM_BASE_URL 覆盖
-  - 主模型默认 deepseek-chat
+  - 主模型默认 deepseek-flash
 
   ## 目录约定
   - src/harness/  核心 runtime（loop / llm / parser / tools / session / context / trace）

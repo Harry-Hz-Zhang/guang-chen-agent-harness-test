@@ -25,6 +25,9 @@ runs/
 *.jsonl
 !doc/**/*.jsonl
 
+# Agent runtime 运行期产物（会话/记忆/trace/待办）
+data/
+
 # uv / 构建产物
 dist/
 build/

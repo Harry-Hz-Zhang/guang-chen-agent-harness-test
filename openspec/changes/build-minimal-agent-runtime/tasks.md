@@ -21,7 +21,7 @@ T1 骨架+config ─┬─> T2 registry ──> T3 内置工具 ─────�
 
 ## Wave 1
 
-- [ ] Task 1: 搭建包骨架与 RuntimeConfig 并修订 AGENTS.md
+- [x] Task 1: 搭建包骨架与 RuntimeConfig 并修订 AGENTS.md
   - complexity: 🟢
   - files: Create `src/harness/__init__.py`、`src/harness/config.py`、`tests/__init__.py`；Modify `AGENTS.md`、`openspec/config.yaml`、`.gitignore`（追加 `data/`）
   - RED:
@@ -36,7 +36,7 @@ T1 骨架+config ─┬─> T2 registry ──> T3 内置工具 ─────�
     - 默认值逐项精确断言（上表 11 项），不允许只断言「字段存在」
     - 非法环境变量回退路径不抛异常、不产生 None
   - DoD:
-    - `tests/test_config.py` 全部转绿 + `uv run python -c "import harness"` exit 0 + AGENTS.md 含 "deepseek-flash" 且目录约定含 config.py/prompts.py/middleware.py/memory/ + .gitignore 含 data/
+    - `tests/test_config.py` 全部转绿 + `PYTHONPATH=src uv run python -c "import harness"` exit 0（src 布局下普通 Python 进程需显式 PYTHONPATH，仅 pytest 自动注入搜索路径，PowerShell 先 `$env:PYTHONPATH="src"`）+ AGENTS.md 含 "deepseek-flash" 且目录约定含 config.py/prompts.py/middleware.py/memory/ + .gitignore 含 data/
   - 最小验证: `uv run pytest tests/test_config.py -q`
 
 ## Wave 2
@@ -324,8 +324,8 @@ T1 骨架+config ─┬─> T2 registry ──> T3 内置工具 ─────�
     - 流式渲染思考/正文前缀互斥（思考行必含前缀、正文行必不含）
     - LLM 错误后 REPL 存活（继续消费输入）
   - DoD:
-    - `tests/test_cli.py` 全部转绿 + `uv run python -m harness --help` exit 0 + README 含四节：运行方式 / 系统设计（模块图）/ memory 召回时机与放置方式 / AI Prompt 与问题解决记录
-  - 最小验证: `uv run pytest tests/test_cli.py -q && uv run python -m harness --help`
+    - `tests/test_cli.py` 全部转绿 + `PYTHONPATH=src uv run python -m harness --help` exit 0（src 布局需显式 PYTHONPATH，PowerShell 先 `$env:PYTHONPATH="src"`）+ README 含四节：运行方式 / 系统设计（模块图）/ memory 召回时机与放置方式 / AI Prompt 与问题解决记录
+  - 最小验证: `uv run pytest tests/test_cli.py -q && PYTHONPATH=src uv run python -m harness --help`
 
 ## 收尾（随 Task 13 提交）
 
