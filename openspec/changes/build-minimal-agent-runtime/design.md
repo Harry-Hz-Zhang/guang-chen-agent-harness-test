@@ -124,6 +124,9 @@ class LLMClient:
     def __init__(self, config: RuntimeConfig) -> None: ...
     def invoke(self, messages: list[dict], tools: list[dict] | None = None) -> AIMessage: ...
     def stream(self, messages: list[dict], tools: list[dict] | None = None) -> Iterator[StreamEvent]: ...
+
+
+class LLMError(Exception): ...  # LLM 调用失败（网络/超时/鉴权/缺 key）统一封装，含可读中文消息；CLI 据此输出提示并保持 REPL 可用
 ```
 
 ```python

@@ -82,7 +82,7 @@ T1 骨架+config ─┬─> T2 registry ──> T3 内置工具 ─────�
     - `tests/session/test_session_store.py` 全部转绿 + 所有写方法为 append-only（不重写整文件，用 "a" 模式验证）
   - 最小验证: `uv run pytest tests/session/test_session_store.py -q`
 
-- [ ] Task 5: 实现 LLMClient 与 AIMessage（invoke 非流式）
+- [x] Task 5: 实现 LLMClient 与 AIMessage（invoke 非流式）
   - complexity: 🟡
   - files: Create `src/harness/llm.py`、`tests/test_llm.py`
   - RED:
@@ -93,6 +93,7 @@ T1 骨架+config ─┬─> T2 registry ──> T3 内置工具 ─────�
     - `TestLLMClient#testThinkingDisabledExtraBody`（config.thinking_enabled=False → mock create 收到的调用参数含 extra_body=={"thinking":{"type":"disabled"}}）
     - `TestLLMClient#testTimeoutAndRetriesPassed`（monkeypatch openai.OpenAI 捕获构造参数（config timeout=60.0、max_retries=2）→ 断言 OpenAI(timeout=60.0, max_retries=2) 精确传入）
     - `TestLLMClient#testApiKeyMissingRaises`（monkeypatch delenv DEEPSEEK_API_KEY → 构造 LLMClient 抛出异常且消息含 "DEEPSEEK_API_KEY" 指引）
+    - `TestLLMClient#testInvokeApiErrorRaisesLLMError`（monkeypatch openai.OpenAI，mock create 抛 APIConnectionError/Exception("boom") → invoke 抛 LLMError 且消息含 "boom"，不裸抛原始异常）
   - GREEN:
     - `uv run pytest tests/test_llm.py -q`（全部转绿）
   - ASSERT:
