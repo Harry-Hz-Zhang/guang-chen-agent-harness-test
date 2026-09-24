@@ -28,7 +28,6 @@ runs/
 # uv / 构建产物
 dist/
 build/
-uv.lock
 
 # openspec init 自动生成的技能副本（与用户级 ~/.agents/skills 重复，不入库）
 .agents/

@@ -21,11 +21,11 @@
 
 | 项 | 选择 |
 | --- | --- |
-| 语言 | Python 3.13+ |
-| 依赖管理 | `uv`（备选 `pip`，命令见 §5） |
-| 测试 | `pytest` |
+| 语言 | Python 3.13+（本机实测 3.13.15） |
+| 依赖管理 | `uv`（本机已装，`.venv` 已就绪） |
+| 测试 | `pytest`（实测可用） |
 | LLM 提供方 | **DeepSeek**（OpenAI 兼容协议） |
-| LLM SDK | `openai` 官方 SDK，通过 `base_url` 指向 DeepSeek |
+| LLM SDK | `openai` 官方 SDK（实测 3.19.2），通过 `base_url` 指向 DeepSeek |
 | 密钥 | 环境变量 `DEEPSEEK_API_KEY`，**绝不写入代码或提交** |
 | base_url | `https://api.deepseek.com` |
 
@@ -75,17 +75,14 @@ openspec/               VSDD/OpenSpec artifacts（方案真源）
 ## 5. 常用命令
 
 ```bash
-# 安装依赖（uv）
+# 安装依赖（uv，会按 pyproject 创建 .venv 并安装 openai / pytest）
 uv sync
 
-# 安装依赖（pip 备选）
-pip install -e .
-
 # 运行全部测试
-uv run pytest -q
+uv run pytest
 
 # 运行单个测试文件
-uv run pytest tests/test_loop.py -q
+uv run pytest tests/test_loop.py
 
 # 启动 CLI
 uv run python -m harness
@@ -93,6 +90,9 @@ uv run python -m harness
 # 指定 session 启动
 uv run python -m harness --session s1
 ```
+
+> 说明：本项目是**应用**不是可分发的库，`pyproject.toml` 里设了 `[tool.uv] package = false`，
+> 不走 `pip install -e .` 打包安装；`src/` 通过 pytest 的 `pythonpath = ["src"]` 进入搜索路径。
 
 ## 6. 提交规范
 
