@@ -129,7 +129,7 @@ T1 骨架+config ─┬─> T2 registry ──> T3 内置工具 ─────�
 
 ## Wave 3
 
-- [ ] Task 3: 实现四个内置工具（calculator/search/weather/todo）
+- [x] Task 3: 实现四个内置工具（calculator/search/weather/todo）
   - complexity: 🟡
   - files: Create `src/harness/tools/calculator.py`、`search.py`、`weather.py`、`todo.py`、`tests/tools/test_builtin_tools.py`
   - RED:
