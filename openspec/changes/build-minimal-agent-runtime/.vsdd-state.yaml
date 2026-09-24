@@ -5,7 +5,7 @@ complexity_mode: standard
 execution_mode: serial
 active_task: ""
 active_review_stage: ""
-last_verified_task: "3"
+last_verified_task: "6"
 reverse_sync_required: false
 exploration_handoff_path: last-exploration-handoff.md
 design_review_rounds: 2

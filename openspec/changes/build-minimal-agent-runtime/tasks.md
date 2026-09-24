@@ -154,7 +154,7 @@ T1 骨架+config ─┬─> T2 registry ──> T3 内置工具 ─────�
     - `tests/tools/test_builtin_tools.py` 全部转绿 + calculator 实现基于 ast 白名单（禁 eval/exec）+ 每个工具中文 description
   - 最小验证: `uv run pytest tests/tools/test_builtin_tools.py -q`
 
-- [ ] Task 6: 实现 parser（parse_response 与参数校验）
+- [x] Task 6: 实现 parser（parse_response 与参数校验）
   - complexity: 🟡
   - files: Create `src/harness/parser.py`、`tests/test_parser.py`
   - RED:

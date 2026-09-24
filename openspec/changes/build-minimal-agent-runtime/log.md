@@ -270,6 +270,32 @@
 - 范围说明：`doc/my-plan.md` 的未提交改动为会话期间用户笔记外部编辑（压缩口径表述更新），不属 Task 3 范围，未并入本 commit
 - auto_commit: true
 
+### Review Evidence Task 6
+- Stage: spec
+- Subagent ID / turn: ses_f2d3bf461ffeDPb2xkt5TEhUEx
+- Verdict: PASS
+- Findings: 无 Critical/Important/DESIGN_ISSUE；spec 覆盖 2/2（parser 侧；loop 侧 enforcement 归 T9）；Minor 2 条（「不是 JSON」消息可再精确 / 附加契约测试超出 RED 清单——合理补测）
+
+### Review Evidence Task 6
+- Stage: code-quality
+- Subagent ID / turn: ses_f2d3bdc52ffeJKPWL0AwHyETc1
+- Verdict: PASS
+- Findings: 无 Critical/Important/DESIGN_ISSUE；正面确认 3 项（ToolArgumentError 为 design 契约非镀金 / AgentDecision 普通赋值写法正确 / tool_calls 引用共享为 design 取向）；Minor 2 条（required 防御不对称——schema 属开发者侧可接受 / 「同一列表」断言缺失）
+
+### Build Evidence Task 6
+- 命令: `uv run pytest tests/test_parser.py -q` + `uv run pytest`
+- exit code: 0 / 0
+- 关键输出:
+  ```
+  ........                                                               [100%]
+  exit: 0
+  .....................................................................    [100%]
+  full exit: 0
+  ```
+- TDD 证据（implementer ses_f2d3db262ffe0KBxbWMvQ8UoKs）：RED `ModuleNotFoundError: No module named 'harness.parser'` → GREEN 8 passed（7 RED + testToolArgumentErrorCarriesContext 契约锁）；全量 69 passed
+- tasks.md 双层回写: Task 6 行 `- [ ]` → `- [x]`
+- auto_commit: true
+
 ## 待办
 
 - [x] design review（第 1 轮 PASS，Should Improve 4 项已修复）
