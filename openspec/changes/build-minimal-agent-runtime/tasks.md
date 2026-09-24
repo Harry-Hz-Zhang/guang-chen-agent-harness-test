@@ -61,7 +61,7 @@ T1 骨架+config ─┬─> T2 registry ──> T3 内置工具 ─────�
     - `tests/tools/test_registry.py` 全部转绿 + BaseTool 为 ABC 且 execute 带 @abstractmethod + 全部公共方法有类型注解与中文 docstring
   - 最小验证: `uv run pytest tests/tools/test_registry.py -q`
 
-- [ ] Task 4: 实现 SessionStore（JSONL 会话存储）
+- [x] Task 4: 实现 SessionStore（JSONL 会话存储）
   - complexity: 🟡
   - files: Create `src/harness/session/__init__.py`、`src/harness/session/store.py`、`tests/session/__init__.py`、`tests/session/test_session_store.py`
   - RED:

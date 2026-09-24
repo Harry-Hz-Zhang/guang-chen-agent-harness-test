@@ -151,6 +151,34 @@
 - tasks.md 双层回写: Task 2 行 `- [ ]` → `- [x]`
 - auto_commit: true
 
+### Review Evidence Task 4
+- Stage: spec
+- Subagent ID / turn: ses_f2d86f3ffffeu0nVXrOTl3P4ZU
+- Verdict: PASS
+- Findings: 无 Critical/Important；DESIGN_ISSUE 1 条（message_rounds 口径与 design.md:229 冲突——与质量审查同发现，已退回 implementer 修复）；Minor 4 条（session_meta.model 恒 None 占位 / append "a" 模式无直接断言 / reasoning_content 透传留待 T9 锁 / state 文件随流程推进）
+
+### Review Evidence Task 4
+- Stage: code-quality
+- Subagent ID / turn: ses_f2d86d624ffevt5f3oYEyMZpWb（第 1 轮 BLOCKED：FileNotFoundError 误报 warning + message_rounds 口径偏离 design「会话累计」）
+- Subagent ID / turn: ses_f2d7dffeeffeZEmbaygqHyYah2（修复后 scoped 复审）
+- Verdict: PASS（两条 Important 均 ADDRESSED；小修 4 项全 ADDRESSED；无新引入问题）
+- Findings: 非阻塞边界观察 1 条（ordinal 非 int 的 message 记录静默跳过，仅外部篡改触发）
+
+### Build Evidence Task 4
+- 命令: `uv run pytest tests/session/test_session_store.py -q` + `uv run pytest`
+- exit code: 0 / 0
+- 关键输出:
+  ```
+  ...........                                                           [100%]
+  exit: 0
+  ......................                                                 [100%]
+  full exit: 0
+  ```
+- TDD 证据（implementer ses_f2d8bdaa4ffeo0s1qZCDKXU3Oq + 修复轮同 session）：RED `ModuleNotFoundError: No module named 'harness.session'` → GREEN 7 passed；修复轮 RED（testNewSessionNoSpuriousWarning 见「读取失败」warning / testMessageRoundsCountsAllHistory `assert 0 == 3` 失败）→ GREEN 11 passed；全量 22 passed
+- 修复轮新增 4 用例：testNewSessionNoSpuriousWarning / testMessageRoundsCountsAllHistory / testMultipleCompactionsLastWins / testCorruptLineLogsWarning
+- tasks.md 双层回写: Task 4 行 `- [ ]` → `- [x]`
+- auto_commit: true
+
 ## 待办
 
 - [x] design review（第 1 轮 PASS，Should Improve 4 项已修复）
