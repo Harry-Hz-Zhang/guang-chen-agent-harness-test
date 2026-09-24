@@ -125,6 +125,32 @@
 - tasks.md 双层回写: Task 1 行 `- [ ]` → `- [x]`（无 ### Task 1 细项层，仅顶层 checkbox）
 - auto_commit: true（用户 apply 指令覆盖 local.yaml 默认 false；runtime 块见 state）
 
+### Review Evidence Task 2
+- Stage: spec
+- Subagent ID / turn: ses_f2d8e20b3ffewrf4GLQCIAYz83
+- Verdict: PASS
+- Findings: 无 Critical/Important/DESIGN_ISSUE；spec 覆盖率 6/6；ASSERT 3/3；Minor 1 条（`raise ... from None` 抹 KeyError 链，无信息损失）
+
+### Review Evidence Task 2
+- Stage: code-quality
+- Subagent ID / turn: ses_f2d8e090fffexVPzm0l58qljGa
+- Verdict: PASS
+- Findings: Minor 4 条不阻断（dict 类型参数可写全 / tool_args 未防御拷贝 / tool 空串哨兵 vs None / pickle 备忘）；ToolExecutionError 与 BaseException.args 无冲突、注解式属性声明对子类两种写法兼容均核实正确
+
+### Build Evidence Task 2
+- 命令: `uv run pytest tests/tools/test_registry.py -q` + `uv run pytest`
+- exit code: 0 / 0
+- 关键输出:
+  ```
+  ......                                                                   [100%]
+  exit: 0
+  ...........                                                              [100%]
+  full exit: 0
+  ```
+- TDD 证据（implementer ses_f2d9150cbffeKc4lFuTdEbRNYh）：RED `ModuleNotFoundError: No module named 'harness.tools'` → GREEN 6 passed；全量 11 passed 无回归
+- tasks.md 双层回写: Task 2 行 `- [ ]` → `- [x]`
+- auto_commit: true
+
 ## 待办
 
 - [x] design review（第 1 轮 PASS，Should Improve 4 项已修复）

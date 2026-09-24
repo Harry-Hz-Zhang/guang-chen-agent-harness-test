@@ -41,7 +41,7 @@ T1 骨架+config ─┬─> T2 registry ──> T3 内置工具 ─────�
 
 ## Wave 2
 
-- [ ] Task 2: 实现 BaseTool 抽象与 ToolRegistry
+- [x] Task 2: 实现 BaseTool 抽象与 ToolRegistry
   - complexity: 🟡
   - files: Create `src/harness/tools/__init__.py`、`src/harness/tools/base.py`、`src/harness/tools/registry.py`、`tests/tools/__init__.py`、`tests/tools/test_registry.py`
   - RED:
