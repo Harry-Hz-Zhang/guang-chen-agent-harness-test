@@ -174,7 +174,7 @@ T1 骨架+config ─┬─> T2 registry ──> T3 内置工具 ─────�
     - `tests/test_parser.py` 全部转绿 + AgentDecision 联合类型两分支均有用例覆盖
   - 最小验证: `uv run pytest tests/test_parser.py -q`
 
-- [ ] Task 12: 实现 MemoryStore 与 MemorySummarizer
+- [x] Task 12: 实现 MemoryStore 与 MemorySummarizer
   - complexity: 🔴
   - files: Create `src/harness/memory/__init__.py`、`store.py`、`summarizer.py`、`src/harness/prompts.py`（MEMORY_SUMMARY_PROMPT/MEMORY_MERGE_PROMPT）、`tests/memory/__init__.py`、`tests/memory/test_memory_store.py`、`tests/memory/test_summarizer.py`
   - RED:
