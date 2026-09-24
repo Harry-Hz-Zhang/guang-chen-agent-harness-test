@@ -14,7 +14,7 @@
 2. 工具注册机制（名称 + 描述 + 参数 Schema），由 LLM 基于 Schema 自主决策调用
 3. LLM 输出解析（提取思考过程 / 工具调用 / 最终答案）
 4. session 隔离与持久化（同用户多窗口互不影响）
-5. context 有效管理（最大轮次、多轮记忆、追问支持、超长基础压缩）
+5. context 有效管理（单次请求决策轮上限、多轮记忆、追问支持、超长基础压缩）
 6. 异常处理 + 工具调用 trace 日志
 
 ## 2. 技术栈
@@ -41,7 +41,7 @@ doc/                    PRD 与说明文档（需求原文，冻结不改）
 src/harness/            核心 runtime
   __init__.py
   __main__.py           CLI 入口（python -m harness）
-  loop.py               ReAct 主循环 + 最大轮次限制
+  loop.py               ReAct 主循环 + 单次请求决策轮上限
   llm.py                模型客户端封装
   parser.py             LLM 输出解析（思考 / 工具调用 / 最终答案）
   tools/

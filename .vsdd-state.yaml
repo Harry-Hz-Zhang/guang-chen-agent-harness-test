@@ -1,0 +1,2 @@
+# VSDD 状态文件（explore 阶段生成，propose 阶段继续维护）
+exploration_handoff_path: last-exploration-handoff.md
