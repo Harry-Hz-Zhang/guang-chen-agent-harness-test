@@ -214,6 +214,33 @@
 - tasks.md 双层回写: Task 5 行 `- [ ]` → `- [x]`
 - auto_commit: true
 
+### Review Evidence Task 8
+- Stage: spec
+- Subagent ID / turn: ses_f2d60b029ffemBeeAYBZsbUqMe
+- Verdict: PASS
+- Findings: 无 Critical/Important/DESIGN_ISSUE；spec 覆盖率 5/5（trace 五 Requirement）；`gen_ai.response.finish_reasons` 新增裁定不越界（spec「含」为最小集、OTel 标准属性名）；Minor 2 条（LLM error 路径无测试 / finish_reasons 值无断言）
+
+### Review Evidence Task 8
+- Stage: code-quality
+- Subagent ID / turn: ses_f2d6096abffeybD09UwZubhCsD
+- Verdict: PASS（附两条 Important 建议：①JsonlExporter 无锁——T12 后台线程将并发写；②4 处防御分支无测试）
+- Findings: DESIGN_ISSUE 1 条（_trace_sessions/_spans 只进不出，CLI 单进程量级无害，常驻服务需收口——留后续 change）；Minor 4 条（告警缺 span_id / json.dumps 在 try 外 / session_id 未清洗 / PROVIDER_NAME 硬编码）
+- 修复轮（implementer ses_f2d69a077ffel34b7XlGEI82zw，按 reviewer 处方）：JsonlExporter 加 threading.Lock（T12 并发写防护）+ 3 条契约锁定用例（unknown span_id / 写盘失败仅告警 / conversation id 回退 unknown）；13+44 用例全绿
+
+### Build Evidence Task 8
+- 命令: `uv run pytest tests/test_trace.py -q` + `uv run pytest`
+- exit code: 0 / 0
+- 关键输出:
+  ```
+  .............                                                          [100%]
+  exit: 0
+  ............................................                           [100%]
+  full exit: 0
+  ```
+- TDD 证据（implementer ses_f2d69a077ffel34b7XlGEI82zw；首轮报告异常精简「已完成」→ 恢复 session 补全完整报告后进入审查）：RED `ModuleNotFoundError: No module named 'harness.trace'` → GREEN 10 passed；修复轮 3 条锁定用例（当前行为已正确、防退化）+ 加锁，13 passed；全量 44 passed
+- tasks.md 双层回写: Task 8 行 `- [ ]` → `- [x]`
+- auto_commit: true
+
 ## 待办
 
 - [x] design review（第 1 轮 PASS，Should Improve 4 项已修复）

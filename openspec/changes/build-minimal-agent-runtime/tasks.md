@@ -104,7 +104,7 @@ T1 骨架+config ─┬─> T2 registry ──> T3 内置工具 ─────�
     - `tests/test_llm.py` 全部转绿 + 测试全程无真实网络（openai.OpenAI 全 mock）+ reasoning_content 访问统一封装在 llm.py 单点
   - 最小验证: `uv run pytest tests/test_llm.py -q`
 
-- [ ] Task 8: 实现 TraceCollector 与 JsonlExporter
+- [x] Task 8: 实现 TraceCollector 与 JsonlExporter
   - complexity: 🟡
   - files: Create `src/harness/trace.py`、`tests/test_trace.py`
   - RED:
