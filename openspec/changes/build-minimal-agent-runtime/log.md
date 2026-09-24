@@ -179,6 +179,41 @@
 - tasks.md 双层回写: Task 4 行 `- [ ]` → `- [x]`
 - auto_commit: true
 
+## 2026-09-24 apply（Task 5 前 Reverse Sync ×2）
+
+| 事件 | 说明 |
+| --- | --- |
+| 触发 | tasks.md T13 RED 引用 `LLMError("超时")` 但 design.md 命名表从未定义该类（CLI 可恢复错误提示的载体无处安放） |
+| 修订 A（design.md 决策 5） | llm.py 命名块补 `class LLMError(Exception)`：LLM 调用失败（网络/超时/鉴权/缺 key）统一封装，CLI 据此输出提示并保持 REPL 可用 |
+| 修订 B（tasks.md T5 RED） | 补第 8 条 `TestLLMClient#testInvokeApiErrorRaisesLLMError`（mock create 抛异常 → invoke 抛 LLMError 不裸抛），保持 TDD 覆盖与 T13 依赖闭环 |
+
+### Review Evidence Task 5
+- Stage: spec
+- Subagent ID / turn: ses_f2d73101bffeLECD640l8WtWUF
+- Verdict: PASS
+- Findings: 无 Critical/Important/DESIGN_ISSUE；spec 覆盖率 8/8（含 reverse-sync 补的第 8 条）；决策 3 三约束落地、reasoning_content getattr 单点 grep 验证；Minor 2 条（docstring 措辞范围略宽 / 合法 JSON 非 dict 无覆盖，spec 亦未要求）
+
+### Review Evidence Task 5
+- Stage: code-quality
+- Subagent ID / turn: ses_f2d72f5cbffenhnAww7Imvn3QN
+- Verdict: PASS（附建议：`_to_ai_message` 在 try/except 外，choices 空/ message None 会裸抛 IndexError/AttributeError 绕过 LLMError 契约，建议顺手修复）
+- Findings: 正面确认 3 项（Task 11 扩展点干净 / SimpleNamespace 避开 MagicMock 自动属性陷阱 / 测试密闭性经污染环境实证）；Minor 2 条（可变 dict 常量引用 / response 参数 Any）
+- 修复轮（implementer ses_f2d7a0dc3ffeLGV01wHeTUNnLH，按 reviewer 原处方）：新增 testInvokeMalformedResponseRaisesLLMError（RED IndexError → GREEN LLMError），9+31 用例全绿
+
+### Build Evidence Task 5
+- 命令: `uv run pytest tests/test_llm.py -q` + `uv run pytest`
+- exit code: 0 / 0
+- 关键输出:
+  ```
+  .........                                                              [100%]
+  exit: 0
+  ...............................                                        [100%]
+  full exit: 0
+  ```
+- TDD 证据（implementer ses_f2d7a0dc3ffeLGV01wHeTUNnLH）：RED `ModuleNotFoundError: No module named 'harness.llm'` → GREEN 8 passed；修复轮 RED（IndexError）→ GREEN 9 passed；全量 31 passed
+- tasks.md 双层回写: Task 5 行 `- [ ]` → `- [x]`
+- auto_commit: true
+
 ## 待办
 
 - [x] design review（第 1 轮 PASS，Should Improve 4 项已修复）
