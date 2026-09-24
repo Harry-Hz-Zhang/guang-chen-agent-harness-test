@@ -188,6 +188,7 @@ class LoopState:
     round_no: int
     messages: list[dict]
     user_input: str
+    trace_id: str = ""  # start_trace 注入（压缩 middleware 据此挂 span），见数据流
 
 
 class Middleware(ABC):

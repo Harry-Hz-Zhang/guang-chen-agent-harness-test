@@ -333,6 +333,43 @@
 - tasks.md 双层回写: Task 12 行 `- [ ]` → `- [x]`
 - auto_commit: true
 
+## 2026-09-24 apply（Task 7 前 Reverse Sync ×3）
+
+| 事件 | 说明 |
+| --- | --- |
+| 触发 | T7 RED 的 testBuildBasicOrder 断言「system 为 SYSTEM_PROMPT」，但 SYSTEM_PROMPT 按 tasks.md 原排在 T9 才创建（T9 files 含 Modify prompts.py）——T7 无从引用，属 artifacts 内部顺序缺口；另 design.md 数据流（:65）写明 trace_id 注入 LoopState 但命名表 LoopState 字段漏列（T9 RED testTraceIdInjectedIntoLoopState 需要） |
+| 修订 A（tasks.md T7） | files 追加 Modify `src/harness/prompts.py`（SYSTEM_PROMPT 由 T7 创建，附原因注记） |
+| 修订 B（tasks.md T9） | files 去掉「Modify prompts.py（SYSTEM_PROMPT）」，改为注记「SYSTEM_PROMPT 已由 Task 7 创建，本 task 直接引用」 |
+| 修订 C（design.md 决策 5） | LoopState 补 `trace_id: str = ""` 字段（与数据流 :65 及 T9 RED 对齐） |
+
+### Review Evidence Task 7
+- Stage: spec
+- Subagent ID / turn: ses_f2cfab644ffeTPQ2bogl8a7dxm
+- Verdict: PASS
+- Findings: 无 Critical/Important/DESIGN_ISSUE；spec 覆盖率 14/14（RED 8 + GREEN + ASSERT 3 + DoD 2；上下文组装 3/3 Scenario）；Reverse Sync 修订吻合无新缺陷；Minor 4 条（typing.Callable 弃用别名 / Any 注解 / 浅拷贝嵌套引用 / 截断上界断言偏松）
+
+### Review Evidence Task 7
+- Stage: code-quality
+- Subagent ID / turn: ses_f2cfa9920ffeWPRveaCuCejVzB
+- Verdict: PASS
+- Findings: 无 Critical/Important；DESIGN_ISSUE 2 条均为可辩护取舍（零抽象方法 ABC 为 design 契约现状 / MEMORY_SECTION_HEADER 位置可辩护）；Minor 6 条（ceil 未锁定 / 截断边界 2000/2001 未测 / 防御分支缺口 / 测试本地重写常量 / Any 注解 / 截断上界偏松）——不阻断，留验证阶段参考
+
+### Build Evidence Task 7
+- 命令: `uv run pytest tests/context/test_builder.py -q` + `uv run pytest`
+- exit code: 0 / 0
+- 关键输出:
+  ```
+  ........                                                               [100%]
+  exit: 0
+  ........................................................................ [ 76%]
+  ......................                                                   [100%]
+  full exit: 0
+  ```
+- TDD 证据（implementer ses_f2d021b17ffeBf6H0SPi7q74Mw）：RED `ModuleNotFoundError: No module named 'harness.context'` → GREEN 8 passed（tasks.md 实际 8 条 RED；主会话派发误计 9 已被 implementer 按 tasks.md 纠正）；全量 94 passed
+- 附注：SYSTEM_PROMPT 措辞按 tasks.md ASSERT 消解（不含「历史记忆」四字但提及记忆段占位）；SYSTEM_PROMPT 创建自本 task（Reverse Sync 修订 A）
+- tasks.md 双层回写: Task 7 行 `- [ ]` → `- [x]`
+- auto_commit: true
+
 ## 待办
 
 - [x] design review（第 1 轮 PASS，Should Improve 4 项已修复）
