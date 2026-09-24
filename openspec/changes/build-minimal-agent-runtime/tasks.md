@@ -224,7 +224,7 @@ T1 骨架+config ─┬─> T2 registry ──> T3 内置工具 ─────�
     - `tests/context/test_builder.py` 全部转绿 + Middleware 三钩子均有默认空实现（子类可只覆盖其一）
   - 最小验证: `uv run pytest tests/context/test_builder.py -q`
 
-- [ ] Task 11: 实现流式 stream 与事件聚合
+- [x] Task 11: 实现流式 stream 与事件聚合
   - complexity: 🔴
   - files: Modify `src/harness/llm.py`（追加 stream/collect）、`tests/test_stream.py`
   - RED:
