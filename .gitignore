@@ -1,0 +1,34 @@
+# 虚拟环境
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 环境变量与密钥（绝不可提交）
+.env
+.env.*
+*.key
+
+# 运行期产物
+runs/
+*.jsonl
+!doc/**/*.jsonl
+
+# uv / 构建产物
+dist/
+build/
+uv.lock
+
+# openspec init 自动生成的技能副本（与用户级 ~/.agents/skills 重复，不入库）
+.agents/
