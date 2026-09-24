@@ -202,9 +202,9 @@ T1 骨架+config ─┬─> T2 registry ──> T3 内置工具 ─────�
 
 ## Wave 4
 
-- [ ] Task 7: 实现 ContextBuilder、estimate_tokens 与 Middleware 基类
+- [x] Task 7: 实现 ContextBuilder、estimate_tokens 与 Middleware 基类
   - complexity: 🟡
-  - files: Create `src/harness/context/__init__.py`、`builder.py`、`src/harness/middleware.py`、`tests/context/__init__.py`、`tests/context/test_builder.py`
+  - files: Create `src/harness/context/__init__.py`、`builder.py`、`src/harness/middleware.py`、`tests/context/__init__.py`、`tests/context/test_builder.py`；Modify `src/harness/prompts.py`（SYSTEM_PROMPT，由 T7 创建——T7 RED 的 system 消息断言依赖该常量，原排 T9 创建会导致引用落空）
   - RED:
     - `TestContextBuilder#testBuildBasicOrder`（mock sessions.read_context_messages 返回 [user1, assistant1]、mock memory.render_summary 返回 None → build("s1","今天天气") 输出 [system, user1, assistant1, {"role":"user","content":"今天天气"}]，system 为 SYSTEM_PROMPT）
     - `TestContextBuilder#testMemoryInjected`（mock memory.render_summary 返回 "用户偏好中文" → system 消息含"历史记忆"段且包含该内容）
@@ -248,7 +248,7 @@ T1 骨架+config ─┬─> T2 registry ──> T3 内置工具 ─────�
 
 - [ ] Task 9: 实现 ReactLoop 主循环
   - complexity: 🔴
-  - files: Create `src/harness/loop.py`、`tests/test_loop.py`；Modify `src/harness/prompts.py`（SYSTEM_PROMPT）
+  - files: Create `src/harness/loop.py`、`tests/test_loop.py`（SYSTEM_PROMPT 已由 Task 7 创建于 prompts.py，本 task 直接引用）
   - RED:
     - `TestReactLoop#testDirectAnswer`（FakeLLM 返回 AIMessage(content="你好") 无 tool_calls → run() 返回 LoopResult.answer=="你好"、rounds==1、tool_call_count==0、truncated==False）
     - `TestReactLoop#testSingleToolRound`（FakeLLM 依序返回 [带 calc("2+3*4") 的 tool_calls、content="14"]（注册真 calculator）→ answer=="14"、rounds==2、tool_call_count==1，session 存储中含 role=="tool" 且 content=="14" 的消息）
