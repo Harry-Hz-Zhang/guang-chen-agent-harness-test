@@ -296,6 +296,43 @@
 - tasks.md 双层回写: Task 6 行 `- [ ]` → `- [x]`
 - auto_commit: true
 
+## 2026-09-24 apply（Task 12 派发异常记录）
+
+| 事件 | 说明 |
+| --- | --- |
+| 空返回 ×2 | Task 12 implementer 子代理（ses_f2d383ba8ffexL9k5gIAhtMbXz）连续两次返回空结果；经主会话核实（git status + pytest）：**未创建任何文件、未执行任何工作**，属基础设施异常（与 propose 阶段 design review 前 3 次空返回同款） |
+| 处理 | 作废该 session，重新派发全新 implementer 执行 Task 12（原 prompt 不变） |
+| 处理更新 | 第 2 次全新派发（ses_f2d2226e9ffeJZ1SLY6BUWtK38）与第 3 次精简 prompt 派发（ses_f2d19d2acffeeiwER6pwPvw6xx）**同样空返回且零工作**（共 4 连败，每次均经 git status 核实无任何产物）；切换预案：**主会话亲自实现 Task 12**（严格 TDD：先写 12 条 RED 测试跑红 → 实现 → 转绿），实现后仍派发独立审查子代理（若派发持续故障则如实记录审查降级） |
+
+### Review Evidence Task 12
+- Stage: spec
+- Subagent ID / turn: ses_f2d115a96ffec9wW93MjJ90W5M
+- Verdict: PASS
+- Findings: 无 Critical/Important/DESIGN_ISSUE；spec 覆盖率 5/5；Minor 7 条（UPDATE 无直接测试 / 索引重复重写 / 短前缀宽松匹配 / write-False 计入返回 / stop-start 竞态 / markdown 代码块不剥离 / 依赖 Any 注解）
+
+### Review Evidence Task 12
+- Stage: code-quality
+- Subagent ID / turn: ses_f2d113afbffeKrW48rRiQJHGtU（第 1 轮 BLOCKED：C1 UPDATE 半失败返回 -1 且已删条目（运行实证）+ I1 短前缀误删 + I2 LLM 失败 span 悬空）
+- Subagent ID / turn: ses_f2d0937c6ffeEkZg2OBujDRYcN（修复后 scoped 复审）
+- Verdict: PASS（C1/I1/I2 与 5 项顺带修复全部 ADDRESSED 且逐项独立复核；无新引入问题；备注 UPDATE 空内容退化为删除属后续增强项）
+- Findings: Minor 遗留（stop-start 竞态 / session_id 路径拼接待 T13 统一 / 空会话总结可前置检查 / 依赖 Any 注解）
+
+### Build Evidence Task 12
+- 命令: `uv run pytest tests/memory -q` + `uv run pytest`
+- exit code: 0 / 0
+- 关键输出:
+  ```
+  .................                                                       [100%]
+  exit: 0
+  ........................................................................ [ 83%]
+  ..............                                                           [100%]
+  full exit: 0
+  ```
+- TDD 证据（**主会话实现**，implementer 派发 4 连败后按预案接管）：RED `ModuleNotFoundError: No module named 'harness.memory'`（12 用例收集失败）→ GREEN 12 passed；review 修复轮 RED 4 条（testMergeUpdateDedupCountsApplied 旧代码返回 -1 / testMergeShortHashRejected 旧代码误删 / testScanFailureEndsSpanWithError 旧代码 0 次 end_llm_span / testScanSkipsWhenWriteRejected 旧代码返回 ["s1"]）→ GREEN 17 passed；全量 86 passed
+- 修复内容：UPDATE 去掉倒扣（-1 仅解析失败路径，任何文件改动前返回）、_delete_entry 长度下限 12、_summarize_session 失败先以 error 结束 span 再上抛、write-True 才计入返回列表、docstring 声明线程边界与损坏降级、杂项清理
+- tasks.md 双层回写: Task 12 行 `- [ ]` → `- [x]`
+- auto_commit: true
+
 ## 待办
 
 - [x] design review（第 1 轮 PASS，Should Improve 4 项已修复）
