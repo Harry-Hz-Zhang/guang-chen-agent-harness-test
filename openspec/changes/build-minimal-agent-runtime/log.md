@@ -468,6 +468,25 @@
 - tasks.md 双层回写: Task 10 行 `- [ ]` → `- [x]`
 - auto_commit: true
 
+### Build Evidence Task 13
+- 命令: `uv run pytest tests/test_cli.py -q` + `$env:PYTHONPATH="src"; uv run python -m harness --help` + `uv run pytest`
+- exit code: 0 / 0 / 0
+- 关键输出:
+  ```
+  ............                                                           [100%]
+  cli exit: 0
+  help exit: 0
+  ........................................................................ [ 50%]
+  .......................................................................  [100%]  (全量 144)
+  full exit: 0
+  ```
+- TDD 证据（**主会话实现**，用户指令免逐 task 审查）：RED `ModuleNotFoundError: No module named 'harness.__main__'`（12 用例收集失败）→ GREEN 12 passed（一次转绿）；全量 144 passed
+- 用例构成：11 条 RED（verbatim，testResumeSessionAnnounced/testCommandNew/testCommandSessions/testCommandHistory/testUserInputRoutesToLoop/testCommandExit/testDefaultSessionIdAnnounced/testNoStreamFlag/testApiKeyMissingStartup/testLlmErrorRecoverable + TestRender#testStreamEventRendering）+ 1 条 testStreamFlagPassesCallback（on_event 可调用性正向锁定，与 testNoStreamFlag 成对）
+- README：四节齐备（运行方式 / 系统设计含数据流+模块图 / memory 召回时机与放置方式 / AI Prompt 与问题解决记录含 6 条已解决问题表 + 8 项手工验收清单待人工执行）
+- Review Evidence：按用户指令后置到收尾统一审查
+- tasks.md 双层回写: Task 13 行 `- [ ]` → `- [x]`
+- auto_commit: true
+
 ## 待办
 
 - [x] design review（第 1 轮 PASS，Should Improve 4 项已修复）

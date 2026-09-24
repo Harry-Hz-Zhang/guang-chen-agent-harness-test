@@ -303,7 +303,7 @@ T1 骨架+config ─┬─> T2 registry ──> T3 内置工具 ─────�
 
 ## Wave 7
 
-- [ ] Task 13: 实现 CLI REPL 与 README
+- [x] Task 13: 实现 CLI REPL 与 README
   - complexity: 🔴
   - files: Create `src/harness/__main__.py`、`tests/test_cli.py`、`README.md`
   - RED:
