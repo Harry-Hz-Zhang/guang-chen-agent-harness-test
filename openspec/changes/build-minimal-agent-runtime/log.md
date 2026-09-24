@@ -399,6 +399,52 @@
 - tasks.md 双层回写: Task 11 行 `- [ ]` → `- [x]`
 - auto_commit: true
 
+## 2026-09-24 apply（Task 9 前 Reverse Sync ×4）
+
+| 事件 | 说明 |
+| --- | --- |
+| 触发 | design 决策 5 的 `ReactLoop.run(user_input, on_event)` 与构造器均无 session_id，但 loop 全程需要 session（存取消息/trace/LoopState）；T13 RED testCommandNew 明确要求「mock loop.run 的 session 参数变化」（/new 切会话不重建 loop）——运行期会话归属缺失 |
+| 修订（design.md 决策 5） | `run` 签名补 `session_id: str` 参数（user_input 之后、on_event 之前），附 /new 场景注记；构造器保持 design 原 7 参不变 |
+
+## 2026-09-24 apply（Task 9 审查后 Reverse Sync ×5：当前输入重复缺陷）
+
+| 事件 | 说明 |
+| --- | --- |
+| 触发 | Task 9 code-quality reviewer 实证：loop 按 design 决策 1「先落库 user 消息再 build」，而决策 5/T7 的 build 契约「历史 + 当前输入」会在末尾再追加同一输入 → **当前输入每轮在请求中出现两次**（round 1 = [system, user, user]，round 2 = [system, user, assistant, tool, user]），token 冗余且尾部重复 user 违反 OpenAI 协议惯例，上真实 API 前必须修 |
+| 修订 A（design.md 决策 5 ContextBuilder 注释） | build 契约明确：当前输入仅在 user_input 非空时追加（空串=不追加，供 ReAct 第 2+ 轮复用） |
+| 修订 B（design.md 决策 1 数据流） | SessionStore.append(user message) 从「build 之前」移到「首轮 build 之后、LLM 调用之前」（落库时机仍满足实时持久化）；后续轮 build 传空串 |
+| 兼容性 | T7 既有用例全部使用非空 user_input，行为不变；T9 既有用例不断言请求精确形状，兼容 |
+| 同批处理 | reviewer Important×2：ToolNotFoundError 分支与流式路径（on_event→stream+_tee）补测试；DESIGN_ISSUE×3：carried 语义修正（上轮 request 真正回传）、TimeoutError 粒度与线程池退出路径 docstring 声明；Minor：_tee 类型收紧等 |
+| 修复落地 | 主会话按 TDD 修复：新增 4 条 RED（testUserInputAppearsOncePerRound 旧代码 `assert 2 == 1` 实证 / testEmptyUserInputAppendsNothing / testToolNotFoundStructuredReturn / testStreamingPathForwardsEvents）→ loop 首轮 build 后落库 user 消息、后续轮传空串；builder 空串不追加；FakeLLM 加 stream 路径；carried=request；docstring 补声明 → 16+9+120 全绿 |
+| 用户指令调整 | 2026-09-24 用户指令：**先把代码全部写完，审查（审批）放到最后统一做**——T9 修复后的 scoped 复审中止，与 T10/T13 的审查一并后置到收尾统一执行（各 task 仍保留最小验证 + 构建证据 + commit） |
+
+### Review Evidence Task 9
+- Stage: spec
+- Subagent ID / turn: ses_f2cd47a84ffeVP1caTOQENiSpN
+- Verdict: PASS
+- Findings: 无 Critical/Important/DESIGN_ISSUE；spec 覆盖率 5/5（10 Scenario 全实现支撑）；Minor 6 条（trace error 断言缺口 / 后续结构 Scenario 未直测 / 缺必填路径 / reasoning 回传未直断 / executor 每调用新建 / 伪代码参数字面量微调）
+
+### Review Evidence Task 9
+- Stage: code-quality
+- Subagent ID / turn: ses_f2cd4603fffe8tRYpgG0xpdPAB
+- Verdict: PASS（附条件：DESIGN_ISSUE #1 重复输入缺陷已走 Reverse Sync×5 并修复；Important×2 已补测试；修复后 scoped 复审按用户指令后置到最终统一审查）
+- Findings: 正面确认（错误 JSON 形状一致 D23 五字段 / middleware 链嵌套顺序正确 / before_model→build 顺序保证压缩先于组装 / rounds==invoke 次数 / 脚本耗尽双保险 / 密闭）；遗留 Minor（rounds/round_no 冗余 / truncated 不调 after_model / tool_call_count 口径 docstring）
+
+### Build Evidence Task 9
+- 命令: `uv run pytest tests/test_loop.py -q` + `uv run pytest`
+- exit code: 0 / 0
+- 关键输出:
+  ```
+  ................                                                        [100%]
+  .................                                                       [100%]  (builder)
+  ........................................................................ [ 60%]
+  ...........................................                            [100%]  (全量 120)
+  full exit: 0
+  ```
+- TDD 证据（**主会话实现**，派发 3 连败后接管）：RED `ModuleNotFoundError: No module named 'harness.loop'`（13 用例收集失败）→ GREEN 13 passed；审查修复轮 RED 4 条（重复输入 `assert 2 == 1` / 空输入追加 / ToolNotFound 无用例 / 流式无用例）→ GREEN 16+9+120 passed
+- tasks.md 双层回写: Task 9 行 `- [ ]` → `- [x]`
+- auto_commit: true
+
 ## 待办
 
 - [x] design review（第 1 轮 PASS，Should Improve 4 项已修复）

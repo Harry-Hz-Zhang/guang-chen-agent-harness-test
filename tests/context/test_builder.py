@@ -110,6 +110,18 @@ class TestContextBuilder:
             {"role": "user", "content": "你好"},
         ]
 
+    def testEmptyUserInputAppendsNothing(self) -> None:
+        """user_input 为空串时不追加当前输入（ReAct 第 2+ 轮复用契约）。"""
+        user1 = {"role": "user", "content": "你好"}
+        assistant1 = {"role": "assistant", "content": "回答"}
+        builder, _, _ = _make_builder([user1, assistant1])
+        out = builder.build("s1", "")
+        assert out == [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            user1,
+            assistant1,
+        ]
+
 
 class TestEstimateTokens:
     def testDeterministicFormula(self) -> None:

@@ -63,10 +63,11 @@ data/                  # 运行时产物（gitignore）
 ```
 用户输入
   → TraceCollector.start_trace（trace_id 注入 LoopState，middleware 可据此挂 span）
-  → SessionStore.append(user message)
   → [middleware.before_model]  CompactionMiddleware: should_compact? → ContextCompressor.compact()
       （压缩内的摘要 LLM 调用经 start_llm_span(kind="compaction") 包裹，与主循环 span 同 trace 平级）
   → ContextBuilder.build()     系统提示词(+记忆段) + 压缩摘要 + 未压缩历史 + 当前输入
+  → SessionStore.append(user message)（首轮 build 后、LLM 调用前落库；后续轮不再传当前输入，
+      历史已含——避免当前输入在请求中出现两次）
   → TraceCollector.start_llm_span
   → LLMClient.stream()/invoke()
       ├─ on_event 回调 → CLI 分通道渲染（思考/正文/工具调用中）
@@ -212,8 +213,12 @@ class ReactLoop:
         self, llm, registry, sessions, builder, trace, middlewares, config
     ) -> None: ...
     def run(
-        self, user_input: str, on_event: Callable[[StreamEvent], None] | None = None
+        self,
+        user_input: str,
+        session_id: str,
+        on_event: Callable[[StreamEvent], None] | None = None,
     ) -> LoopResult: ...
+    # session_id 由 run 传入（CLI /new 切会话时无需重建 loop，见 T13 RED「loop.run 的 session 参数变化」）
 ```
 
 ```python
@@ -239,6 +244,8 @@ class ContextBuilder:
     def __init__(self, sessions, memory, config) -> None: ...
     def build(self, session_id: str, user_input: str) -> list[dict]: ...
     #   组装顺序：system(含记忆段) → __compaction_summary__ 消息 → 未压缩历史 → 当前输入
+    #   当前输入仅在 user_input 非空时追加（空串=不追加，供 ReAct 循环第 2+ 轮复用：
+    #   循环首轮 build 后才把 user 消息落库，后续轮历史已含当前输入，传空串避免重复）；
     #   摘要消息 content 首行带明文标记「以下为此前对话的压缩摘要」（与原文可区分）；
     #   tool 结果 content 超 TOOL_RESULT_MAX_CHARS(2000) 时截断并附「全文见会话记录」尾注
 

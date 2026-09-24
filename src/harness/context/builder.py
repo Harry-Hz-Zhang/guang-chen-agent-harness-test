@@ -74,13 +74,19 @@ class ContextBuilder:
     def build(
         self, session_id: str, user_input: str
     ) -> list[dict[str, Any]]:
-        """组装完整上下文：system → 压缩摘要（如有）→ 未压缩历史 → 当前输入。"""
+        """组装完整上下文：system → 压缩摘要（如有）→ 未压缩历史 → 当前输入。
+
+        当前输入仅在 user_input 非空时追加（空串 = 不追加，供 ReAct
+        循环第 2+ 轮复用——循环首轮 build 后才把 user 消息落库，后续
+        轮历史已含当前输入，传空串避免重复）。
+        """
         history = self._sessions.read_context_messages(session_id)
         memory_summary = self._memory.render_summary(session_id)
         messages: list[dict[str, Any]] = [self._build_system_message(memory_summary)]
         for message in history:
             messages.append(self._adapt_history_message(message))
-        messages.append({"role": "user", "content": user_input})
+        if user_input:
+            messages.append({"role": "user", "content": user_input})
         return messages
 
     def _build_system_message(
