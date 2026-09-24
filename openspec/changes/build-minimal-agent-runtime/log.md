@@ -445,6 +445,29 @@
 - tasks.md 双层回写: Task 9 行 `- [ ]` → `- [x]`
 - auto_commit: true
 
+## 2026-09-24 apply（Task 10/13 执行模式调整）
+
+| 事件 | 说明 |
+| --- | --- |
+| 用户指令 | 2026-09-24：「先把代码全部写完，审批放在最后统一做」——T10/T13 不再逐 task 派发审查子代理，主会话直接严格 TDD 实现（先 RED 后 GREEN），最小验证 + 构建证据 + commit 照常；审查统一后置到收尾 |
+
+### Build Evidence Task 10
+- 命令: `uv run pytest tests/context/test_compressor.py -q` + `uv run pytest`
+- exit code: 0 / 0
+- 关键输出:
+  ```
+  ............                                                           [100%]
+  exit: 0
+  ........................................................................ [ 54%]
+  ...........................................                            [100%]  (全量 132)
+  full exit: 0
+  ```
+- TDD 证据（**主会话实现**，用户指令免逐 task 审查）：RED `ModuleNotFoundError: No module named 'harness.context.compressor'`（12 用例收集失败）→ 首轮 GREEN 9/12（3 失败：①测试 helper 对 compaction 记录取 message 键 KeyError→修 helper；②窗口下限默认 0 误排 ordinal 0 消息→改 -1；③测试 tool 消息缺 tool_call_id 致配对检测失效→补字段）→ GREEN 12 passed；全量 132 passed
+- 用例构成：11 条 RED（verbatim）+ testCompactToolResultTruncatedInRendering（DoD「tool_result 超 500 字符截断」的显式锁定）
+- Review Evidence：按用户指令后置到收尾统一审查（与 T9 修复轮复审、T13 一并）
+- tasks.md 双层回写: Task 10 行 `- [ ]` → `- [x]`
+- auto_commit: true
+
 ## 待办
 
 - [x] design review（第 1 轮 PASS，Should Improve 4 项已修复）

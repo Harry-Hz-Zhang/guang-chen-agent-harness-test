@@ -276,7 +276,7 @@ T1 骨架+config ─┬─> T2 registry ──> T3 内置工具 ─────�
 
 ## Wave 6
 
-- [ ] Task 10: 实现 ContextCompressor 与 CompactionMiddleware
+- [x] Task 10: 实现 ContextCompressor 与 CompactionMiddleware
   - complexity: 🔴
   - files: Create `src/harness/context/compressor.py`、`tests/context/test_compressor.py`；Modify `src/harness/prompts.py`（COMPACTION_PROMPT）
   - RED:
