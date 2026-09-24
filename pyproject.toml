@@ -2,7 +2,6 @@
 name = "guang-chen-agent-harness-test"
 version = "0.1.0"
 description = "从零实现的最小可用 Agent Runtime（不依赖任何 agent 框架）"
-readme = "doc/PRD.md"
 requires-python = ">=3.13"
 dependencies = [
     "openai>=1.60.0",
