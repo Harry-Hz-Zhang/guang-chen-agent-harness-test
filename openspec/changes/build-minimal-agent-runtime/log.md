@@ -370,6 +370,35 @@
 - tasks.md 双层回写: Task 7 行 `- [ ]` → `- [x]`
 - auto_commit: true
 
+### Review Evidence Task 11
+- Stage: spec
+- Subagent ID / turn: ses_f2cf06189ffea4euVhK56jUftF
+- Verdict: PASS
+- Findings: 无 Critical/Important/DESIGN_ISSUE；spec 覆盖率 6/6；DoD 共享 client 测试有效性确认（构造计数法）；Minor 3 条（RED 片段 type 字段未模拟——不影响断言 / design 决策 8「6 种事件」计数笔误——建议后续修订为 5 种 / reasoning 与 content 判空风格不对称）
+
+### Review Evidence Task 11
+- Stage: code-quality
+- Subagent ID / turn: ses_f2cf0474dffeC7i3oeKRz7TVLx
+- Verdict: PASS（附 1 Important 建议：多工具/乱序 index 聚合路径零覆盖；1 DESIGN_ISSUE 建议：invoke/stream 请求组装重复可提取）
+- Findings: 正面确认 6 项（迭代期异常覆盖实测 / GeneratorExit 干净退出 / json.loads 统一时机 / UsageEvent 语义 docstring 明示 / dataclass 等值断言友好 / 共享 client 测试真实拦截回归）；Minor 5 条（属性缺失路径未复刻 / 分片字段缺失靠 try 兜底 / 生成器关闭靠 GC / choices 参数名 / mock 脚手架重复）
+- 补强轮（implementer ses_f2cf5dcecffeFs4F4rRFR6Z9F4，按 reviewer 处方）：新增 testMultiToolAggregation（突变测试实证排序敏感：临时去 sorted 立即失败）+ 提取 _request_kwargs 公共组装（invoke/stream 共用）；8+102 passed
+
+### Build Evidence Task 11
+- 命令: `uv run pytest tests/test_stream.py -q` + `uv run pytest`
+- exit code: 0 / 0
+- 关键输出:
+  ```
+  ........                                                               [100%]
+  exit: 0
+  ........................................................................ [ 70%]
+  ..............................                                          [100%]
+  full exit: 0
+  ```
+- TDD 证据（implementer ses_f2cf5dcecffeFs4F4rRFR6Z9F4）：RED `ImportError: cannot import name 'DoneEvent' from 'harness.llm'` → GREEN 7 passed；补强轮突变 RED（testMultiToolAggregation 断言 ['call_2','call_1']≠['call_1','call_2'] 失败）→ GREEN 8 passed；全量 102 passed
+- 附注：design 决策 8「6 种事件」为计数笔误（实为 5 种 StreamEvent），spec reviewer 建议后续修订 design 措辞——记录待 verify 阶段统一处理
+- tasks.md 双层回写: Task 11 行 `- [ ]` → `- [x]`
+- auto_commit: true
+
 ## 待办
 
 - [x] design review（第 1 轮 PASS，Should Improve 4 项已修复）
