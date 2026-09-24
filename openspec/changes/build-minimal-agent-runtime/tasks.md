@@ -246,7 +246,7 @@ T1 骨架+config ─┬─> T2 registry ──> T3 内置工具 ─────�
 
 ## Wave 5
 
-- [ ] Task 9: 实现 ReactLoop 主循环
+- [x] Task 9: 实现 ReactLoop 主循环
   - complexity: 🔴
   - files: Create `src/harness/loop.py`、`tests/test_loop.py`（SYSTEM_PROMPT 已由 Task 7 创建于 prompts.py，本 task 直接引用）
   - RED:
