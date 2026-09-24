@@ -213,3 +213,103 @@ class TestRender:
         text = render_event(TextDelta(text="答"))
         assert "答" in text
         assert "思考" not in text
+
+
+class TestStreamRendering:
+
+    def testStreamDeltasRawOutput(self) -> None:
+        """流式分片走 raw 出口：前缀只在思考段首出现、分片间无换行。"""
+        from harness.__main__ import run_repl
+
+        loop = MagicMock()
+        loop.run.return_value = _ok_result()
+        writer = _Writer()
+        raw = _Writer()
+        run_repl(
+            loop, _mock_sessions(), RuntimeConfig(), ["你好", "/exit"], writer,
+            session_id="s1", raw_writer=raw,
+        )
+        on_event = loop.run.call_args.kwargs.get("on_event")
+        assert callable(on_event)
+        on_event(ReasoningDelta(text="思"))
+        on_event(ReasoningDelta(text="考"))
+        on_event(TextDelta(text="你"))
+        on_event(TextDelta(text="好"))
+        assert raw.lines == ["思考｜", "思", "考", "\n", "你", "好"]
+
+    def testStreamTurnEndNewline(self) -> None:
+        """流式正文原样续写，仅回合结束时补一个换行。"""
+        from harness.__main__ import run_repl
+
+        loop = MagicMock()
+
+        def fake_run(text: str, session_id: str, on_event: Any = None) -> LoopResult:
+            if on_event is not None:
+                on_event(TextDelta(text="答"))
+                on_event(TextDelta(text="案"))
+            return _ok_result()
+
+        loop.run.side_effect = fake_run
+        writer = _Writer()
+        raw = _Writer()
+        run_repl(
+            loop, _mock_sessions(), RuntimeConfig(), ["你好", "/exit"], writer,
+            session_id="s1", raw_writer=raw,
+        )
+        assert raw.lines == ["答", "案", "\n"]
+
+
+class TestSessionManagement:
+
+    def testHistoryIncludesMessagesAndCompaction(self) -> None:
+        """/history 概览含消息数、轮次与最近压缩状态。"""
+        from harness.__main__ import run_repl
+
+        loop = MagicMock()
+        records = _message_records(6)
+        records.append({
+            "ts": "t", "ordinal": 6, "kind": "compaction",
+            "compressed_up_to": 5, "summary": "旧摘要", "summary_model": "m",
+        })
+        sessions = _mock_sessions(records)
+        sessions.message_rounds.return_value = 3
+        writer = _Writer()
+        run_repl(loop, sessions, RuntimeConfig(), ["/history", "/exit"], writer,
+                 session_id="s1")
+        assert loop.run.call_count == 0
+        assert "6 条消息" in writer.text
+        assert "3" in writer.text
+        assert "最近压缩" in writer.text
+
+    def testOnSessionChangeCallbackInvoked(self) -> None:
+        """/new 切会话时通知 on_session_change 回调（todo 换绑依据）。"""
+        from harness.__main__ import run_repl
+
+        loop = MagicMock()
+        loop.run.return_value = _ok_result()
+        callback = MagicMock()
+        writer = _Writer()
+        run_repl(
+            loop, _mock_sessions(), RuntimeConfig(), ["/new", "你好", "/exit"],
+            writer, session_id="s1", on_session_change=callback,
+        )
+        callback.assert_called_once()
+        new_id = callback.call_args.args[0]
+        assert new_id != "s1"
+        assert loop.run.call_args.args[1] == new_id
+
+    def testRebindableTodoToolSwitchesSession(self, tmp_path: Any) -> None:
+        """RebindableTodoTool 按 ref 当前会话换绑存储文件。"""
+        from pathlib import Path
+
+        from harness.__main__ import RebindableTodoTool
+
+        ref: dict[str, str] = {"session_id": "s1"}
+        tool = RebindableTodoTool(Path(tmp_path), ref)
+        added = tool.execute(action="add", todo="写周报")
+        assert "1" in added
+        assert (tmp_path / "todos" / "s1.json").exists()
+        ref["session_id"] = "s2"
+        listing = tool.execute(action="list")
+        assert "暂无" in listing
+        assert not (tmp_path / "todos" / "s2.json").exists()
