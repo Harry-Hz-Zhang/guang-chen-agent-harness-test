@@ -1,0 +1,60 @@
+schema: spec-driven
+
+# Project context (optional)
+# This is shown to AI when creating artifacts.
+# Add your tech stack, conventions, style guides, domain knowledge, etc.
+context: |
+  # 项目背景（供 AI 生成 artifacts 时参考，禁止把本段原样复制进 artifact）
+
+  ## 目标
+  从零实现一个最小可用 Agent Runtime，不依赖任何 agent 框架。
+  需求原文见 doc/PRD.md（冻结，不修改）。
+
+  ## 技术栈
+  - Python 3.13+ / uv 管理依赖 / pytest 测试
+  - LLM：DeepSeek（OpenAI 兼容协议），SDK 用官方 openai 包
+  - 密钥读环境变量 DEEPSEEK_API_KEY；模型名与 base_url 可由 LLM_MODEL / LLM_BASE_URL 覆盖
+  - 主模型默认 deepseek-chat
+
+  ## 目录约定
+  - src/harness/  核心 runtime（loop / llm / parser / tools / session / context / trace）
+  - tests/        pytest，与 src 镜像
+  - openspec/     方案 artifacts 真源
+  - doc/          需求原文
+
+  ## 关键约束
+  - 禁止引入 langgraph / openhands / openclaw / autogen / crewai 作为主流程依赖
+  - 禁止在测试中调用真实 LLM API，测试必须用假模型或 mock
+  - 禁止静默吞异常：工具失败必须结构化回传给 LLM
+  - 全部函数需类型注解；公共接口需中文 docstring
+  - 提交格式 <type>: <中文描述>，每 task 一次原子 commit，禁止自动 push
+
+  ## 完整公约
+  见仓库根目录 AGENTS.md
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+rules:
+  proposal:
+    - "必须含「非目标（Non-goals）」小节，明确列出本 change 不做什么"
+    - "必须含可验证的验收标准，禁止『功能可用』等抽象表述"
+  tasks:
+    - "每个 task 必须为行首 `- [ ] Task N: <动词> <对象>`"
+    - "每个 task 必须含 RED / GREEN / ASSERT / DoD 四个子项"
+    - "RED 每条形如 `<TestClassName>#<methodName>（mock <依赖> 返回 <值> → 断言 <行为>）`"
+    - "每个 task 的 RED 条目数 ≥ 5，覆盖：happy path / 终止短路 / 异常路径 / 边界 / 调用次数"
+    - "GREEN 必须给出具体可执行命令，如 `uv run pytest tests/test_loop.py -q`"
+  design:
+    - "必须说明模块划分、关键数据结构、以及至少一处被否决的备选方案与原因"
+
+# Per-operation guidance (optional)
+# Add advisory guidance for how apply and archive work should be conducted.
+# This is separate from artifact rules above.
+# Example:
+#   operations:
+#     apply:
+#       guidance:
+#         - Keep test summaries concise
+#     archive:
+#       guidance:
+#         - Summarize the archive outcome before finishing
