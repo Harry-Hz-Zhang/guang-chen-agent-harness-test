@@ -241,6 +241,35 @@
 - tasks.md 双层回写: Task 8 行 `- [ ]` → `- [x]`
 - auto_commit: true
 
+### Review Evidence Task 3
+- Stage: spec
+- Subagent ID / turn: ses_f2d52298cffegKcMdOe10nbj3B
+- Verdict: PASS（附 1 条 Important：浮点幂 OverflowError 逃逸——与质量审查同发现，退回修复）
+- Findings: 34 个逃逸探针仅 1 条漏网（OverflowError）；Minor 3 条（todo `:` 路径 / inf 显示 / 超大幂无防护）；spec 覆盖率 4/4
+
+### Review Evidence Task 3
+- Stage: code-quality
+- Subagent ID / turn: ses_f2d520e72ffeIT6FJlN4bsfq8I（第 1 轮 BLOCKED：三条异常逃逸路径 + 幂规模无防护 + 复数/inf 越界）
+- Subagent ID / turn: ses_f2f43906effepNCCpvYNJYngJw（修复后 scoped 复审）
+- Verdict: PASS（Critical×3 / Important / DESIGN_ISSUE / Minor 全 ADDRESSED；实测 7 条逃逸表达式零逃逸、2**1000 合法计算不被挡；无新引入问题）
+- Findings: 说明性观察（双防线等效封堵 / NaN 指数由 isfinite 兜底）
+
+### Build Evidence Task 3
+- 命令: `uv run pytest tests/tools/test_builtin_tools.py -q` + `uv run pytest`
+- exit code: 0 / 0
+- 关键输出:
+  ```
+  .................                                                          [100%]
+  exit: 0
+  .............................................................           [100%]
+  full exit: 0
+  ```
+- TDD 证据（implementer ses_f2d57fadeffepgwlU2UN0g8kFc + 修复轮同 session）：RED `ModuleNotFoundError: No module named 'harness.tools.calculator'` → GREEN 11 passed；修复轮 6 条 RED（OverflowError/RecursionError/ValueError 裸抛 ×3 + DID NOT RAISE ×3）→ GREEN 17 passed；全量 61 passed
+- 修复内容：calculator 五类异常兜底+中文消息映射、Pow 指数上限 1000、复数/非有限结果拒绝、str() 独立 try；todo session_id 拒绝字符集扩 `\/:*?"<>|`+构造期结构化校验+非并发安全 docstring
+- tasks.md 双层回写: Task 3 行 `- [ ]` → `- [x]`
+- 范围说明：`doc/my-plan.md` 的未提交改动为会话期间用户笔记外部编辑（压缩口径表述更新），不属 Task 3 范围，未并入本 commit
+- auto_commit: true
+
 ## 待办
 
 - [x] design review（第 1 轮 PASS，Should Improve 4 项已修复）
