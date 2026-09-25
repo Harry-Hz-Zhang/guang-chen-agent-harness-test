@@ -10,6 +10,7 @@ REPL 内置命令：/exit 退出、/new 切换新会话、/sessions 列出全部
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 import secrets
 import sys
 from typing import Any, Callable, Iterable
@@ -23,6 +24,7 @@ from harness.memory.store import MemoryStore
 from harness.memory.summarizer import MemorySummarizer
 from harness.middleware import Middleware
 from harness.session.store import SessionStore
+from harness.tools.base import BaseTool
 from harness.tools.calculator import CalculatorTool
 from harness.tools.registry import ToolRegistry
 from harness.tools.search import SearchTool
@@ -38,6 +40,34 @@ _SESSIONS_COMMAND = "/sessions"
 _HISTORY_COMMAND = "/history"
 
 _REASONING_PREFIX = "思考｜"
+
+
+class RebindableTodoTool(BaseTool):
+    """会话可重绑定的待办管理工具包装器。
+
+    持有一个包含当前 session_id 的字典引用（{"session_id": "..."}），
+    当用户通过 /new 等命令切换会话时，动态委托到对应会话的 TodoTool，
+    实现多会话隔离存储的无缝切换。
+    """
+
+    name: str = TodoTool.name
+    description: str = TodoTool.description
+    parameters: dict = TodoTool.parameters
+
+    def __init__(self, data_dir: Path, session_ref: dict[str, str]) -> None:
+        """保存数据根目录与当前会话引用字典。"""
+        self._data_dir: Path = data_dir
+        self._session_ref: dict[str, str] = session_ref
+
+    @property
+    def session_id(self) -> str:
+        """返回当前绑定的会话 id。"""
+        return self._session_ref["session_id"]
+
+    def execute(self, **kwargs: Any) -> str:
+        """按当前 session_id 构造 TodoTool 并执行。"""
+        tool = TodoTool(self._data_dir, self.session_id)
+        return tool.execute(**kwargs)
 
 
 def render_event(event: StreamEvent) -> str:
@@ -65,6 +95,12 @@ def _default_writer(text: str) -> None:
     sys.stdout.write(text + "\n")
 
 
+def _default_raw_writer(text: str) -> None:
+    """默认流式分片输出器：写标准输出并立即刷新。"""
+    sys.stdout.write(text)
+    sys.stdout.flush()
+
+
 def run_repl(
     loop: Any,
     sessions: Any,
@@ -72,6 +108,8 @@ def run_repl(
     lines: Iterable[str],
     writer: Writer,
     session_id: str | None = None,
+    raw_writer: Writer | None = None,
+    on_session_change: Callable[[str], None] | None = None,
 ) -> str:
     """执行 REPL 交互循环，返回最终会话 id。
 
@@ -81,6 +119,8 @@ def run_repl(
     """
     if session_id is None:
         session_id = _generate_session_id()
+        if on_session_change is not None:
+            on_session_change(session_id)
         writer(f"已创建新会话 {session_id}（命令：/new 新会话、/sessions 全部会话、/history 概览、/exit 退出）")
     else:
         message_count = sum(
@@ -93,11 +133,7 @@ def run_repl(
         else:
             writer(f"已创建新会话 {session_id}（命令：/new 新会话、/sessions 全部会话、/history 概览、/exit 退出）")
 
-    def on_event(event: StreamEvent) -> None:
-        """流式事件分通道渲染（空渲染跳过）。"""
-        rendered = render_event(event)
-        if rendered:
-            writer(rendered)
+    target_raw: Writer = raw_writer if raw_writer is not None else _default_raw_writer
 
     for line in lines:
         text = line.strip()
@@ -107,6 +143,8 @@ def run_repl(
             break
         if text == _NEW_COMMAND:
             session_id = _generate_session_id()
+            if on_session_change is not None:
+                on_session_change(session_id)
             writer(f"已创建新会话 {session_id}")
             continue
         if text == _SESSIONS_COMMAND:
@@ -117,9 +155,42 @@ def run_repl(
                 writer("暂无其他会话")
             continue
         if text == _HISTORY_COMMAND:
+            records = sessions.load_records(session_id)
+            msg_count = sum(1 for r in records if r.get("kind") == "message")
             rounds = sessions.message_rounds(session_id)
-            writer(f"当前会话 {session_id}：累计 {rounds} 轮对话")
+            compactions = [r for r in records if r.get("kind") == "compaction"]
+            if compactions:
+                last_comp = compactions[-1]
+                writer(
+                    f"当前会话 {session_id}：{msg_count} 条消息，累计 {rounds} 轮对话"
+                    f"，最近压缩至序号 {last_comp.get('compressed_up_to', 0)}"
+                )
+            else:
+                writer(f"当前会话 {session_id}：{msg_count} 条消息，累计 {rounds} 轮对话")
             continue
+
+        in_reasoning = False
+        streamed_any = False
+
+        def on_event(event: StreamEvent) -> None:
+            nonlocal in_reasoning, streamed_any
+            from harness.llm import ReasoningDelta, TextDelta
+
+            if isinstance(event, ReasoningDelta):
+                if not in_reasoning:
+                    if streamed_any:
+                        target_raw("\n")
+                    target_raw(_REASONING_PREFIX)
+                    in_reasoning = True
+                target_raw(event.text)
+                streamed_any = True
+            elif isinstance(event, TextDelta):
+                if in_reasoning:
+                    target_raw("\n")
+                    in_reasoning = False
+                target_raw(event.text)
+                streamed_any = True
+
         try:
             result = loop.run(
                 text,
@@ -131,8 +202,8 @@ def run_repl(
             continue
         if not config.stream_enabled or result.truncated:
             writer(result.answer)
-        elif config.stream_enabled:
-            writer("")
+        elif config.stream_enabled and streamed_any:
+            target_raw("\n")
     return session_id
 
 
@@ -147,13 +218,19 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _build_registry(config: RuntimeConfig, session_id: str) -> ToolRegistry:
-    """注册四个内置工具（todo 绑定启动会话）。"""
+def _build_registry(
+    config: RuntimeConfig, session_ref: dict[str, str] | str
+) -> ToolRegistry:
+    """注册四个内置工具（todo 绑定 session_ref 指向的会话）。"""
     registry = ToolRegistry()
     registry.register(CalculatorTool())
     registry.register(SearchTool())
     registry.register(WeatherTool())
-    registry.register(TodoTool(config.data_dir, session_id))
+    if isinstance(session_ref, str):
+        ref = {"session_id": session_ref}
+    else:
+        ref = session_ref
+    registry.register(RebindableTodoTool(config.data_dir, ref))
     return registry
 
 
@@ -182,10 +259,15 @@ def main(
         return 1
 
     session_id = args.session if args.session else _generate_session_id()
+    session_ref: dict[str, str] = {"session_id": session_id}
+
+    def on_session_change(new_session_id: str) -> None:
+        session_ref["session_id"] = new_session_id
+
     sessions = SessionStore(config.data_dir)
     memory = MemoryStore(config.data_dir, llm)
     builder = ContextBuilder(sessions, memory, config)
-    registry = _build_registry(config, session_id)
+    registry = _build_registry(config, session_ref)
     trace = TraceCollector(JsonlExporter(config.data_dir / "traces"))
     compressor = ContextCompressor(sessions, llm, trace, config)
     middlewares: list[Middleware] = [CompactionMiddleware(compressor)]
@@ -194,7 +276,16 @@ def main(
     summarizer.start()
     input_lines: Iterable[str] = lines if lines is not None else sys.stdin
     try:
-        run_repl(loop, sessions, config, input_lines, output, session_id=session_id)
+        run_repl(
+            loop,
+            sessions,
+            config,
+            input_lines,
+            output,
+            session_id=session_id,
+            raw_writer=_default_raw_writer,
+            on_session_change=on_session_change,
+        )
     finally:
         summarizer.stop()
     return 0
