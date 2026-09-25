@@ -38,6 +38,7 @@
 
 ```text
 doc/                    PRD 与说明文档（需求原文，冻结不改）
+CODEGRAPH.md            代码图谱与全局架构拓扑（由 codegraph 维护）
 src/harness/            核心 runtime
   __init__.py
   __main__.py           CLI 入口（python -m harness）
@@ -77,12 +78,23 @@ openspec/               VSDD/OpenSpec artifacts（方案真源）
 - 对外部输入（LLM 返回的 JSON、工具参数）一律做**显式校验**，不信任其格式。
 - 命名：模块/函数 `snake_case`，类 `PascalCase`，常量 `UPPER_SNAKE`。例外：测试方法名按 `openspec/changes/*/tasks.md` RED 条目规定的原名（`camelCase`）执行，保证用例与需求逐条可追溯，不作 snake_case 强求。
 - 提示词模板集中放置，不散落在业务逻辑里。
+- **代码分析必须使用 CodeGraph**：**每次开始分析代码逻辑、排错或设计方案前，必须使用 `codegraph` 工具**（如 `codegraph context`、`codegraph explore`、`codegraph callers`、`codegraph callees`、`codegraph impact`）深入追寻代码调用链路，确保基于客观事实与精准依赖做出决策，禁止盲目猜测。全局代码拓扑与架构详见 [`CODEGRAPH.md`](CODEGRAPH.md)。
+- **改动代码后必须同步索引**：**每一次修改完代码后，必须执行 `codegraph sync` 命令同步代码索引**，确保 CodeGraph 知识图谱数据库与当前工作区代码实时一致。
 
 ## 5. 常用命令
 
 ```bash
 # 安装依赖（uv，会按 pyproject 创建 .venv 并安装 openai / pytest）
 uv sync
+
+# 代码图谱与索引分析（codegraph）
+codegraph status                  # 查看代码图谱索引状态与统计
+codegraph context "<任务描述>"     # 构建任务上下文：相关符号、关系及代码片段
+codegraph explore "<搜索词>"       # 探索模块：相关符号源码与调用链路径
+codegraph callers <函数/类名>      # 查询调用者 (Callers)
+codegraph callees <函数/类名>      # 查询被调用者 (Callees)
+codegraph impact <符号名>          # 变更影响分析
+codegraph sync                    # 代码修改后同步索引（每次修改代码后必须执行！）
 
 # 运行全部测试
 uv run pytest
@@ -121,9 +133,10 @@ PYTHONPATH=src uv run python -m harness --session s1
 本项目采用 **VSDD standard 模式**，阶段顺序：
 
 ```text
-explore → propose → (用户确认) → apply → verify → archive
+explore（使用 codegraph 分析代码链路） → propose → (用户确认) → apply（改完执行 codegraph sync） → verify → archive
 ```
 
 - 方案真源在 `openspec/changes/<change-name>/`，不在 `doc/`
 - standard 模式每个 task 必须有 RED / GREEN / ASSERT / DoD，且先写测试
-- explore 阶段**不写业务代码**
+- explore 阶段**不写业务代码**，必须使用 `codegraph` 工具分析调用链路与影响范围
+- apply / verify 阶段代码发生变动后，**必须执行 `codegraph sync`** 实时同步代码索引

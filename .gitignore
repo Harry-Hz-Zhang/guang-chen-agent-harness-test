@@ -34,3 +34,6 @@ build/
 
 # openspec init 自动生成的技能副本（与用户级 ~/.agents/skills 重复，不入库）
 .agents/
+
+# CodeGraph 本地数据库与索引缓存
+.codegraph/
