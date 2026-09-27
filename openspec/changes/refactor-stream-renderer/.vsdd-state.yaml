@@ -1,0 +1,22 @@
+# VSDD change 状态
+base_commit: "ca3fa11"
+current_phase: apply
+complexity_mode: standard
+execution_mode: serial
+active_task: "2"
+active_review_stage: ""
+last_verified_task: "1"
+reverse_sync_required: false
+exploration_handoff_path: ""
+design_review_rounds: 0
+design_review_passed: true
+design_review_path: ""
+design_review_verdict: "PASS（用户交互确认通过）"
+sprint_state_path: ""
+known_issues: []
+propose_artifacts_complete: true
+user_confirm_apply: true
+uni_cr_enabled: true
+runtime:
+  auto_commit: true
+  commit_message_guidance: "<type>: <中文描述>（type 限定 feat/fix/test/docs/refactor/chore，主语中文，AGENTS.md 提交规范）"
