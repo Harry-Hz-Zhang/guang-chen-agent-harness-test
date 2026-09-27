@@ -1,4 +1,4 @@
-﻿"""ContextCompressor 与 CompactionMiddleware 的单元测试（全 mock，零网络）。
+"""ContextCompressor 与 CompactionMiddleware 的单元测试（全 mock，零网络）。
 
 注意：本文件 mock 的消息记录 ordinal 采用 0 基（与 tasks.md RED 的
 「ordinal 0-29」口径一致），不经过真实 SessionStore。
@@ -18,7 +18,7 @@ from harness.prompts import COMPACTION_PROMPT
 
 def _msg(ordinal: int, role: str, content: str = "内容") -> dict[str, Any]:
     """构造一条 message 记录（含 ordinal 与消息体）。"""
-    return {"ts": "2026-01-01T00:00:00Z", "ordinal": ordinal, "kind": "message",
+    return {"ordinal": ordinal, "kind": "message",
             "message": {"role": role, "content": content}}
 
 
@@ -79,7 +79,7 @@ class TestCompressor:
         config = RuntimeConfig(compact_rounds=5, compact_tokens=100_000)
         records = _pair_records(0, 10)  # 前 10 轮（ordinal 0-19）
         records.append({
-            "ts": "2026-01-01T00:00:00Z", "ordinal": 20, "kind": "compaction",
+            "ordinal": 20, "kind": "compaction",
             "compressed_up_to": 19, "summary": "旧摘要", "summary_model": "m",
         })
         records.extend(_pair_records(21, 1, "新"))  # 窗口内 1 轮（ordinal 21-22）
@@ -120,7 +120,7 @@ class TestCompressor:
         for i in range(10):  # 带 4 条消息（含工具调用对）的 10 轮（ordinal 0-39）
             records.append(_msg(ordinal, "user", f"u{i}"))
             records.append({
-                "ts": "t", "ordinal": ordinal + 1, "kind": "message",
+                "ordinal": ordinal + 1, "kind": "message",
                 "message": {"role": "assistant", "content": "",
                             "tool_calls": [{"id": f"c{i}", "type": "function",
                                             "function": {"name": "calc", "arguments": "{}"}}]},
@@ -149,7 +149,7 @@ class TestCompressor:
         # 第 10 轮：u10(18), a10tc(19)——工具调用消息
         records.append(_msg(ordinal, "user", "u10"))
         records.append({
-            "ts": "t", "ordinal": ordinal + 1, "kind": "message",
+            "ordinal": ordinal + 1, "kind": "message",
             "message": {"role": "assistant", "content": "",
                         "tool_calls": [{"id": "tc10", "type": "function",
                                         "function": {"name": "calc", "arguments": "{}"}}]},
@@ -158,7 +158,7 @@ class TestCompressor:
         # 第 11 轮：u11(20), tool10(21)——上一轮的工具结果落在本轮开头，a11(22)
         records.append(_msg(ordinal, "user", "u11"))
         records.append({
-            "ts": "t", "ordinal": ordinal + 1, "kind": "message",
+            "ordinal": ordinal + 1, "kind": "message",
             "message": {"role": "tool", "tool_call_id": "tc10", "content": "42"},
         })
         records.append(_msg(ordinal + 2, "assistant", "a11"))
@@ -191,7 +191,7 @@ class TestCompressor:
         config = RuntimeConfig(keep_recent_rounds=5)
         records = _pair_records(0, 10)  # ordinal 0-19
         records.append({
-            "ts": "t", "ordinal": 20, "kind": "compaction",
+            "ordinal": 20, "kind": "compaction",
             "compressed_up_to": 19, "summary": "旧摘要", "summary_model": "m",
         })
         records.extend(_pair_records(21, 15, "续"))  # 窗口 ordinal 21-50
@@ -205,13 +205,13 @@ class TestCompressor:
         config = RuntimeConfig(keep_recent_rounds=5)
         records = _pair_records(0, 9)  # ordinal 0-17
         records.append({
-            "ts": "t", "ordinal": 18, "kind": "message",
+            "ordinal": 18, "kind": "message",
             "message": {"role": "assistant", "content": "",
                         "tool_calls": [{"id": "c9", "type": "function",
                                         "function": {"name": "calc", "arguments": "{}"}}]},
         })
         records.append({
-            "ts": "t", "ordinal": 19, "kind": "message",
+            "ordinal": 19, "kind": "message",
             "message": {"role": "tool", "tool_call_id": "c9", "content": "结" * 3000},
         })
         records.extend(_pair_records(20, 6, "后"))  # ordinal 20-31
