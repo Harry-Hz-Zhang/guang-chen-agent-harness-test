@@ -258,6 +258,30 @@ class TestStreamRendering:
         )
         assert raw.lines == ["答", "案", "\n"]
 
+    def testReplMultiTurnReset(self) -> None:
+        """多轮问答下每轮独立渲染，思考前缀与换行正常复位。"""
+        from harness.__main__ import run_repl
+
+        loop = MagicMock()
+
+        def fake_run(text: str, session_id: str, on_event: Any = None) -> LoopResult:
+            if on_event is not None:
+                on_event(ReasoningDelta(text="思"))
+                on_event(TextDelta(text="答"))
+            return _ok_result()
+
+        loop.run.side_effect = fake_run
+        writer = _Writer()
+        raw = _Writer()
+        run_repl(
+            loop, _mock_sessions(), RuntimeConfig(), ["第一问", "第二问", "/exit"],
+            writer, session_id="s1", raw_writer=raw,
+        )
+        assert raw.lines == [
+            "思考｜", "思", "\n", "答", "\n",
+            "思考｜", "思", "\n", "答", "\n",
+        ]
+
 
 class TestSessionManagement:
 

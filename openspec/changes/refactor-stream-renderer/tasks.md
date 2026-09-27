@@ -21,7 +21,7 @@
     - `tests/test_renderer.py` 全部转绿 + 全部方法含类型注解与中文 docstring
   - 最小验证: `uv run pytest tests/test_renderer.py -q`
 
-- [ ] Task 2: 重构 CLI REPL 集成 StreamRenderer 并同步文档与图谱
+- [x] Task 2: 重构 CLI REPL 集成 StreamRenderer 并同步文档与图谱
   - complexity: 🟡
   - files: Modify `src/harness/__main__.py`、`tests/test_cli.py`、`AGENTS.md`、`CODEGRAPH.md`
   - RED:
