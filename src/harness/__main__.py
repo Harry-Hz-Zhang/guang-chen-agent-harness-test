@@ -39,7 +39,9 @@ _NEW_COMMAND = "/new"
 _SESSIONS_COMMAND = "/sessions"
 _HISTORY_COMMAND = "/history"
 
-_REASONING_PREFIX = "思考｜"
+from harness.renderer import DEFAULT_REASONING_PREFIX, StreamRenderer, render_event
+
+_REASONING_PREFIX = DEFAULT_REASONING_PREFIX
 
 
 class RebindableTodoTool(BaseTool):
@@ -68,21 +70,6 @@ class RebindableTodoTool(BaseTool):
         """按当前 session_id 构造 TodoTool 并执行。"""
         tool = TodoTool(self._data_dir, self.session_id)
         return tool.execute(**kwargs)
-
-
-def render_event(event: StreamEvent) -> str:
-    """把单个流式事件渲染为终端文本（思考带前缀、正文原样，其余为空）。
-
-    思考内容与正文分通道：思考行带「思考」前缀（弱化样式由调用方
-    决定），正文行不带前缀——两者视觉可区分。
-    """
-    from harness.llm import ReasoningDelta, TextDelta
-
-    if isinstance(event, ReasoningDelta):
-        return f"{_REASONING_PREFIX}{event.text}"
-    if isinstance(event, TextDelta):
-        return event.text
-    return ""
 
 
 def _generate_session_id() -> str:
@@ -169,41 +156,23 @@ def run_repl(
                 writer(f"当前会话 {session_id}：{msg_count} 条消息，累计 {rounds} 轮对话")
             continue
 
-        in_reasoning = False
-        streamed_any = False
-
-        def on_event(event: StreamEvent) -> None:
-            nonlocal in_reasoning, streamed_any
-            from harness.llm import ReasoningDelta, TextDelta
-
-            if isinstance(event, ReasoningDelta):
-                if not in_reasoning:
-                    if streamed_any:
-                        target_raw("\n")
-                    target_raw(_REASONING_PREFIX)
-                    in_reasoning = True
-                target_raw(event.text)
-                streamed_any = True
-            elif isinstance(event, TextDelta):
-                if in_reasoning:
-                    target_raw("\n")
-                    in_reasoning = False
-                target_raw(event.text)
-                streamed_any = True
+        renderer = StreamRenderer(
+            raw_writer=target_raw, reasoning_prefix=_REASONING_PREFIX
+        )
 
         try:
             result = loop.run(
                 text,
                 session_id,
-                on_event=on_event if config.stream_enabled else None,
+                on_event=renderer.render if config.stream_enabled else None,
             )
         except LLMError as exc:
             writer(f"出错了：{exc}")
             continue
         if not config.stream_enabled or result.truncated:
             writer(result.answer)
-        elif config.stream_enabled and streamed_any:
-            target_raw("\n")
+        elif config.stream_enabled:
+            renderer.finalize()
     return session_id
 
 

@@ -14,6 +14,7 @@
 ```mermaid
 graph TD
     CLI["CLI / REPL 入口<br/>src/harness/__main__.py"] --> Loop["ReAct 决策循环<br/>ReactLoop (loop.py)"]
+    CLI --> Renderer["流式终端渲染器<br/>StreamRenderer (renderer.py)"]
     CLI --> Sessions["会话持久化存储<br/>SessionStore (session/store.py)"]
     CLI --> Memory["长期记忆存储<br/>MemoryStore (memory/store.py)"]
     CLI --> Summarizer["闲置记忆后台总结器<br/>MemorySummarizer (memory/summarizer.py)"]
@@ -160,6 +161,7 @@ sequenceDiagram
 | 模块文件 | 关键类 / 函数 | 职责与设计要点 |
 | :--- | :--- | :--- |
 | [`src/harness/trace.py`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/trace.py) | [`TraceCollector`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/trace.py#L143)<br/>[`JsonlExporter`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/trace.py#L75) | 分布式链路追踪标准实现。管理 Trace 与父子 Span 生命周期，自动记录 LLM 思考耗时、token 消耗、工具输入输出，落盘为 JSONL 文件。 |
+| [`src/harness/renderer.py`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/renderer.py) | [`StreamRenderer`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/renderer.py#L15)<br/>[`render_event`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/renderer.py#L70) | 流式事件终端渲染器与状态管理。维护思考通道（带前缀）与正文通道（无前缀）的状态切换，逐片委托写入与回合结束换行补齐。 |
 | [`src/harness/__main__.py`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/__main__.py) | [`main`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/__main__.py#L237)<br/>[`run_repl`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/__main__.py#L104)<br/>[`RebindableTodoTool`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/__main__.py#L45) | 应用启动装配入口与交互式 REPL。内置命令（`/new`、`/sessions`、`/history`、`/exit`）拦截，流式思考与正文分通道渲染。 |
 
 ---
