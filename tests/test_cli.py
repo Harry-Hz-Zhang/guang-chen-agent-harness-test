@@ -27,7 +27,7 @@ def _mock_sessions(records: list[dict[str, Any]] | None = None) -> MagicMock:
 def _message_records(count: int) -> list[dict[str, Any]]:
     """构造 count 条 message 记录。"""
     return [
-        {"ts": "t", "ordinal": i, "kind": "message",
+        {"ordinal": i, "kind": "message",
          "message": {"role": "user", "content": f"m{i}"}}
         for i in range(count)
     ]
@@ -292,7 +292,7 @@ class TestSessionManagement:
         loop = MagicMock()
         records = _message_records(6)
         records.append({
-            "ts": "t", "ordinal": 6, "kind": "compaction",
+            "ordinal": 6, "kind": "compaction",
             "compressed_up_to": 5, "summary": "旧摘要", "summary_model": "m",
         })
         sessions = _mock_sessions(records)

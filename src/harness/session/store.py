@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -13,17 +12,12 @@ logger = logging.getLogger(__name__)
 COMPACTION_SUMMARY_NAME: str = "__compaction_summary__"
 
 
-def _now_iso() -> str:
-    """返回当前时刻的 ISO 8601 字符串（UTC 含时区标记）。"""
-    return datetime.now(timezone.utc).isoformat()
-
-
 class SessionStore:
     """会话存储：每个 session 对应一个 JSONL 文件，全部写入均为追加模式。
 
     文件位于 <data_dir>/sessions/<session_id>.jsonl，每行一个独立 JSON
-    对象，公共字段为 ts（ISO 8601 时间戳）、ordinal（从 0 连续递增的
-    序号）与 kind（session_meta / message / compaction 三类）。
+    对象，公共字段为 ordinal（从 0 连续递增的序号）与 kind
+    （message / compaction 两类）。
     注意：同一 session id 不支持多进程并发写——ordinal 为先读后写且
     无锁；多窗口并行仅在不同 session 各写各文件的前提下安全（决策 6）。
     """
@@ -37,12 +31,11 @@ class SessionStore:
         self._data_dir = Path(data_dir)
 
     def append_message(self, session_id: str, message: dict[str, Any]) -> None:
-        """向指定会话追加一条消息记录；首次写入前自动补会话元数据行。"""
+        """向指定会话追加一条消息记录。"""
         ordinal = self._prepare_append(session_id)
         self._append_record(
             session_id,
             {
-                "ts": _now_iso(),
                 "ordinal": ordinal,
                 "kind": "message",
                 "message": message,
@@ -57,7 +50,6 @@ class SessionStore:
         self._append_record(
             session_id,
             {
-                "ts": _now_iso(),
                 "ordinal": ordinal,
                 "kind": "compaction",
                 "compressed_up_to": compressed_up_to,
@@ -155,27 +147,13 @@ class SessionStore:
         return self._sessions_dir() / f"{session_id}.jsonl"
 
     def _prepare_append(self, session_id: str) -> int:
-        """确保会话元数据行已存在，并返回新记录应使用的 ordinal。
+        """返回新记录应使用的 ordinal（当前最大序号 + 1，首条从 0 起）。
 
         成本取舍：每次追加前全文件重扫求 max ordinal，单用户 CLI 的
         量级（单会话消息数以千计）下可接受，换取零内存状态、实例可
         随时重建的简单性。
         """
         records = self._read_valid_records(self._file_path(session_id))
-        has_meta = any(r.get("kind") == "session_meta" for r in records)
-        if not has_meta:
-            self._append_record(
-                session_id,
-                {
-                    "ts": _now_iso(),
-                    "ordinal": 0,
-                    "kind": "session_meta",
-                    "session_id": session_id,
-                    "created": _now_iso(),
-                    "model": None,
-                },
-            )
-            return 1
         max_ordinal = max(
             (
                 r.get("ordinal")
