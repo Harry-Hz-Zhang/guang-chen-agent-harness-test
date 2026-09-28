@@ -1,7 +1,8 @@
 """harness CLI 入口 —— argparse 参数解析、组件装配与 REPL 交互循环。
 
-REPL 内置命令：/exit 退出、/new 切换新会话、/sessions 列出全部会话、
-/history 当前会话概览（命令不进入 LLM）。流式模式下思考与正文分通道
+REPL 内置命令：/exit 退出、/new 新会话、/switch <id> 切换已有会话、
+/sessions 列出全部会话、/history 当前会话概览（命令不进入 LLM）。流式
+模式下思考与正文分通道
 渲染（思考带「思考」前缀）；--no-stream 关闭流式（整段输出）、
 --no-thinking 关闭思考模式。LLM 调用失败输出可读提示并保持 REPL
 可用；缺少 DEEPSEEK_API_KEY 时启动即给出设置指引并以非 0 状态结束。
@@ -36,6 +37,7 @@ Writer = Callable[[str], None]
 
 _EXIT_COMMAND = "/exit"
 _NEW_COMMAND = "/new"
+_SWITCH_COMMAND = "/switch"
 _SESSIONS_COMMAND = "/sessions"
 _HISTORY_COMMAND = "/history"
 
@@ -100,7 +102,7 @@ def run_repl(
 ) -> str:
     """执行 REPL 交互循环，返回最终会话 id。
 
-    命令（/exit /new /sessions /history）不进入 LLM；普通输入路由到
+    命令（/exit /new /switch /sessions /history）不进入 LLM；普通输入路由到
     loop.run（流式配置下挂 on_event 分通道渲染）；LLM 调用失败输出
     可读提示后继续消费输入，不退出。
     """
@@ -108,7 +110,7 @@ def run_repl(
         session_id = _generate_session_id()
         if on_session_change is not None:
             on_session_change(session_id)
-        writer(f"已创建新会话 {session_id}（命令：/new 新会话、/sessions 全部会话、/history 概览、/exit 退出）")
+        writer(f"已创建新会话 {session_id}（命令：/new 新会话、/switch <id> 切换会话、/sessions 全部会话、/history 概览、/exit 退出）")
     else:
         message_count = sum(
             1
@@ -118,7 +120,7 @@ def run_repl(
         if message_count > 0:
             writer(f"已续接会话 {session_id}（{message_count} 条消息）")
         else:
-            writer(f"已创建新会话 {session_id}（命令：/new 新会话、/sessions 全部会话、/history 概览、/exit 退出）")
+            writer(f"已创建新会话 {session_id}（命令：/new 新会话、/switch <id> 切换会话、/sessions 全部会话、/history 概览、/exit 退出）")
 
     target_raw: Writer = raw_writer if raw_writer is not None else _default_raw_writer
 
@@ -154,6 +156,28 @@ def run_repl(
                 )
             else:
                 writer(f"当前会话 {session_id}：{msg_count} 条消息，累计 {rounds} 轮对话")
+            continue
+        parts = text.split()
+        if parts[0] == _SWITCH_COMMAND:
+            if len(parts) != 2:
+                writer(f"用法：{_SWITCH_COMMAND} <会话 id>（可用 /sessions 查看全部会话）")
+                continue
+            target = parts[1]
+            if target not in sessions.session_ids():
+                writer(f"会话 {target} 不存在，可用 /sessions 查看全部会话")
+                continue
+            session_id = target
+            if on_session_change is not None:
+                on_session_change(target)
+            message_count = sum(
+                1
+                for record in sessions.load_records(target)
+                if record.get("kind") == "message"
+            )
+            if message_count > 0:
+                writer(f"已切换会话 {target}（{message_count} 条消息）")
+            else:
+                writer(f"已切换会话 {target}")
             continue
 
         renderer = StreamRenderer(
