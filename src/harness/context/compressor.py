@@ -93,7 +93,7 @@ class ContextCompressor:
             str(getattr(message, "finish_reason", "") or ""),
         )
         self._sessions.append_compaction(
-            session_id, cut, str(message.content), self._config.model
+            session_id, cut, str(message.content)
         )
         del records
 

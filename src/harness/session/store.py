@@ -16,10 +16,10 @@ class SessionStore:
     """会话存储：每个 session 对应一个 JSONL 文件，全部写入均为追加模式。
 
     文件位于 <data_dir>/sessions/<session_id>.jsonl，每行一个独立 JSON
-    对象，公共字段为 ordinal（从 0 连续递增的序号）与 kind
-    （message / compaction 两类）。
-    注意：同一 session id 不支持多进程并发写——ordinal 为先读后写且
-    无锁；多窗口并行仅在不同 session 各写各文件的前提下安全（决策 6）。
+    对象，公共字段仅为 kind（message / compaction 两类）；ordinal 不
+    落盘，由读取方按行序派生（append-only 文件行序即稳定序号）。
+    注意：同一 session id 不支持多进程并发写——追加写无锁，多窗口
+    并行仅在不同 session 各写各文件的前提下安全（决策 6）。
     """
 
     def __init__(self, data_dir: Path) -> None:
@@ -31,35 +31,27 @@ class SessionStore:
         self._data_dir = Path(data_dir)
 
     def append_message(self, session_id: str, message: dict[str, Any]) -> None:
-        """向指定会话追加一条消息记录。"""
-        ordinal = self._prepare_append(session_id)
+        """向指定会话追加一条消息记录（纯追加，不预读文件）。"""
         self._append_record(
             session_id,
-            {
-                "ordinal": ordinal,
-                "kind": "message",
-                "message": message,
-            },
+            {"kind": "message", "message": message},
         )
 
     def append_compaction(
-        self, session_id: str, compressed_up_to: int, summary: str, model: str
+        self, session_id: str, compressed_up_to: int, summary: str
     ) -> None:
         """向指定会话追加一条压缩记录；原始消息行不删除、不改写。"""
-        ordinal = self._prepare_append(session_id)
         self._append_record(
             session_id,
             {
-                "ordinal": ordinal,
                 "kind": "compaction",
                 "compressed_up_to": compressed_up_to,
                 "summary": summary,
-                "summary_model": model,
             },
         )
 
     def load_records(self, session_id: str) -> list[dict[str, Any]]:
-        """按文件行序返回会话全部记录。
+        """按文件行序返回会话全部记录（每条含读取时派生的 ordinal）。
 
         非法 JSON 行（损坏行）跳过并记录 warning，不影响其余行；
         会话文件不存在时返回空列表。
@@ -69,44 +61,43 @@ class SessionStore:
     def read_context_messages(self, session_id: str) -> list[dict[str, Any]]:
         """读取组装上下文用的消息列表（应用最后一次压缩记录）。
 
-        存在压缩记录时返回 [压缩摘要消息] + ordinal 大于压缩区间
+        单趟遍历：同时收集 message 记录与最后一条压缩记录，再按压缩
+        区间上限截取。存在压缩记录时返回 [压缩摘要消息] + ordinal 大于
         上限的消息体，摘要消息形如
         {"role":"user","name":"__compaction_summary__","content":摘要原文}；
         不存在压缩记录时返回全部消息体。均按文件行序（ordinal 顺序）。
         """
-        records = self.load_records(session_id)
         last_compaction: dict[str, Any] | None = None
-        for record in records:
-            if record.get("kind") == "compaction":
+        kept: list[dict[str, Any]] = []
+        for record in self.load_records(session_id):
+            kind = record.get("kind")
+            if kind == "compaction":
                 last_compaction = record
-        cut = -1
-        messages: list[dict[str, Any]] = []
-        if last_compaction is not None:
-            cut = last_compaction.get("compressed_up_to")
-            if not isinstance(cut, int):
-                cut = -1
-            messages.append(
-                {
-                    "role": "user",
-                    "name": COMPACTION_SUMMARY_NAME,
-                    "content": str(last_compaction.get("summary", "")),
-                }
-            )
-        for record in records:
-            if record.get("kind") != "message":
-                continue
-            ordinal = record.get("ordinal")
-            if not isinstance(ordinal, int) or ordinal <= cut:
-                continue
-            message = record.get("message")
-            if not isinstance(message, dict):
-                logger.warning(
-                    "会话 %s 的消息记录 ordinal=%r 缺少合法 message 字段，已跳过",
-                    session_id,
-                    ordinal,
-                )
-                continue
-            messages.append(message)
+            elif kind == "message":
+                message = record.get("message")
+                if isinstance(message, dict):
+                    kept.append(record)
+                else:
+                    logger.warning(
+                        "会话 %s 的消息记录 ordinal=%r 缺少合法 message 字段，已跳过",
+                        session_id,
+                        record.get("ordinal"),
+                    )
+        if last_compaction is None:
+            return [record["message"] for record in kept]
+        cut = last_compaction.get("compressed_up_to")
+        if not isinstance(cut, int):
+            cut = -1
+        messages: list[dict[str, Any]] = [
+            {
+                "role": "user",
+                "name": COMPACTION_SUMMARY_NAME,
+                "content": str(last_compaction.get("summary", "")),
+            }
+        ]
+        messages.extend(
+            record["message"] for record in kept if record["ordinal"] > cut
+        )
         return messages
 
     def session_ids(self) -> list[str]:
@@ -146,24 +137,6 @@ class SessionStore:
         """返回指定会话的 JSONL 文件路径。"""
         return self._sessions_dir() / f"{session_id}.jsonl"
 
-    def _prepare_append(self, session_id: str) -> int:
-        """返回新记录应使用的 ordinal（当前最大序号 + 1，首条从 0 起）。
-
-        成本取舍：每次追加前全文件重扫求 max ordinal，单用户 CLI 的
-        量级（单会话消息数以千计）下可接受，换取零内存状态、实例可
-        随时重建的简单性。
-        """
-        records = self._read_valid_records(self._file_path(session_id))
-        max_ordinal = max(
-            (
-                r.get("ordinal")
-                for r in records
-                if isinstance(r.get("ordinal"), int)
-            ),
-            default=-1,
-        )
-        return max_ordinal + 1
-
     def _append_record(self, session_id: str, record: dict[str, Any]) -> None:
         """以追加模式（"a"）写一行 JSON 记录并立即落盘，不重写整文件。"""
         path = self._file_path(session_id)
@@ -174,9 +147,10 @@ class SessionStore:
     def _read_valid_records(self, path: Path) -> list[dict[str, Any]]:
         """逐行读取 JSONL 文件并返回可解析的记录列表，任何情况不抛异常。
 
-        空行静默跳过；非法 JSON 或非 JSON 对象的行记 warning 后跳过；
-        文件不存在返回空列表（正常路径，无 warning）；文件级读取失败
-        返回已解析的部分。
+        每条记录注入读取时派生的 ordinal（当前已解析条数，损坏行不
+        计入）；空行静默跳过；非法 JSON 或非 JSON 对象的行记 warning
+        后跳过；文件不存在返回空列表（正常路径，无 warning）；文件级
+        读取失败返回已解析的部分。
         """
         records: list[dict[str, Any]] = []
         try:
@@ -199,6 +173,7 @@ class SessionStore:
                             line_no,
                         )
                         continue
+                    parsed["ordinal"] = len(records)
                     records.append(parsed)
         except FileNotFoundError:
             return records
