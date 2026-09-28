@@ -26,7 +26,7 @@
 
 ### Requirement: 闲置会话后台增量提取
 
-后台任务 SHALL 周期性扫描全部会话（周期与闲置阈值沿用现有配置）：对闲置会话，SHALL 仅把「消息 ordinal 超过该会话已提取进度」的消息送入 LLM 提取；LLM SHALL 按约定输出 JSON 对象 `{"memories": [...], "tags": [...]}`（系统对其显式校验）。有效记忆 SHALL 追加写入全局 MEMORY（新 md 文件 + 索引行）并推进该会话进度；空 memories 合法（仅推进进度、不写文件）。提取输出非法（非 JSON / 非对象 / memories 非列表）时本轮 SHALL 跳过该会话且不推进进度（下轮自然重试），不崩溃、不落半成品。已提取过的消息 MUST NOT 重复进入提取 prompt。MUST NOT 对记忆做去重、语义合并或改写。
+后台任务 SHALL 周期性扫描全部会话（周期与闲置阈值沿用现有配置）：对闲置会话，SHALL 仅把「消息 ordinal 超过该会话已提取进度」的消息送入 LLM 提取；提取范围 SHALL 限定为用户相关信息（用户偏好、个人事实、约定等），MUST NOT 把待办事项与工具调用过程提取为记忆；LLM SHALL 按约定输出 JSON 对象 `{"memories": [...], "tags": [...]}`（系统对其显式校验）。有效记忆 SHALL 追加写入全局 MEMORY（新 md 文件 + 索引行）并推进该会话进度；空 memories 合法（仅推进进度、不写文件）。提取输出非法（非 JSON / 非对象 / memories 非列表）时本轮 SHALL 跳过该会话且不推进进度（下轮自然重试），不崩溃、不落半成品。已提取过的消息 MUST NOT 重复进入提取 prompt。MUST NOT 对记忆做去重、语义合并或改写。
 
 #### Scenario: 闲置且有新消息
 

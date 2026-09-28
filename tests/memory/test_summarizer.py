@@ -80,6 +80,11 @@ def _mock_trace() -> MagicMock:
 
 class TestMemorySummarizer:
 
+    def testExtractionPromptScopedToUserInfo(self) -> None:
+        """提取提示词限定用户相关信息，明确排除待办与工具过程。"""
+        assert "未完成事项" not in MEMORY_EXTRACT_PROMPT
+        assert "不要记录待办事项" in MEMORY_EXTRACT_PROMPT
+
     def testScanOnceExtractsIdleSessionNewMessages(self) -> None:
         """闲置且有新消息：提取一次，追加 memories/tags 并推进进度到最大 ordinal。"""
         sessions = _idle_sessions(_message_records("我的猫叫小花", "记一下"))
