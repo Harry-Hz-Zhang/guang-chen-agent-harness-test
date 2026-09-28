@@ -8,7 +8,6 @@ from harness.tools.registry import (
     ToolRegistry,
 )
 from harness.tools.search import SearchTool
-from harness.tools.todo import TodoTool
 from harness.tools.weather import WeatherTool
 
 __all__ = [
@@ -20,5 +19,4 @@ __all__ = [
     "CalculatorTool",
     "SearchTool",
     "WeatherTool",
-    "TodoTool",
 ]
