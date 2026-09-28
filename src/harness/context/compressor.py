@@ -65,16 +65,15 @@ class ContextCompressor:
         LLM 调用经 start_llm_span(kind="compaction") 包裹挂 trace_id
         下；链式压缩时旧摘要并入渲染输入。
         """
-        records = self._message_records(session_id)
         window = self._uncompressed_window(session_id)
-        if not window:
-            return
+        if not window: return
+
         cut = self._compute_cut(window)
-        if cut is None:
-            return
+        if cut is None: return
+
         to_compress = [r for r in window if r["ordinal"] <= cut]
-        if not to_compress:
-            return
+        if not to_compress: return
+
         rendering = self._render_for_summary(session_id, to_compress)
         request: list[dict[str, Any]] = [
             {"role": "user", "content": COMPACTION_PROMPT + rendering}
@@ -95,7 +94,6 @@ class ContextCompressor:
         self._sessions.append_compaction(
             session_id, cut, str(message.content), self._config.model
         )
-        del records
 
     def _message_records(self, session_id: str) -> list[dict[str, Any]]:
         """读取会话全部 message 记录（含 ordinal，损坏行已被 store 过滤）。"""
