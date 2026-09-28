@@ -27,7 +27,7 @@ def _mock_sessions(records: list[dict[str, Any]] | None = None) -> MagicMock:
 def _message_records(count: int) -> list[dict[str, Any]]:
     """构造 count 条 message 记录。"""
     return [
-        {"ordinal": i, "kind": "message",
+        {"ts": "t", "ordinal": i, "kind": "message",
          "message": {"role": "user", "content": f"m{i}"}}
         for i in range(count)
     ]
@@ -292,7 +292,7 @@ class TestSessionManagement:
         loop = MagicMock()
         records = _message_records(6)
         records.append({
-            "ordinal": 6, "kind": "compaction",
+            "ts": "t", "ordinal": 6, "kind": "compaction",
             "compressed_up_to": 5, "summary": "旧摘要", "summary_model": "m",
         })
         sessions = _mock_sessions(records)
@@ -337,3 +337,145 @@ class TestSessionManagement:
         listing = tool.execute(action="list")
         assert "暂无" in listing
         assert not (tmp_path / "todos" / "s2.json").exists()
+
+
+class TestSessionSwitch:
+    """/switch 会话切换命令的单元测试（全 mock loop/sessions，零网络）。"""
+
+    def testCommandSwitchToExistingSession(self) -> None:
+        """切换到已有会话：后续输入写入目标会话，输出含提示与消息数。"""
+        from harness.__main__ import run_repl
+
+        loop = MagicMock()
+        loop.run.return_value = _ok_result()
+        sessions = _mock_sessions(_message_records(6))
+        sessions.session_ids.return_value = ["s1", "s2"]
+        writer = _Writer()
+        run_repl(
+            loop, sessions, RuntimeConfig(), ["/switch s2", "你好", "/exit"],
+            writer, session_id="s1",
+        )
+        assert "已切换会话 s2" in writer.text
+        assert "6 条消息" in writer.text
+        assert loop.run.call_args.args[1] == "s2"
+
+    def testCommandSwitchUnknownSessionKeepsCurrent(self) -> None:
+        """切换到不存在的会话：输出不存在提示，当前会话不变且 REPL 存活。"""
+        from harness.__main__ import run_repl
+
+        loop = MagicMock()
+        loop.run.return_value = _ok_result()
+        sessions = _mock_sessions(_message_records(2))
+        sessions.session_ids.return_value = ["s1"]
+        writer = _Writer()
+        run_repl(
+            loop, sessions, RuntimeConfig(), ["/switch nope", "你好", "/exit"],
+            writer, session_id="s1",
+        )
+        assert "不存在" in writer.text
+        assert "nope" in writer.text
+        assert loop.run.call_count == 1
+        assert loop.run.call_args.args[1] == "s1"
+
+    def testCommandSwitchMissingArgUsage(self) -> None:
+        """/switch 缺参数：输出用法提示，当前会话不变。"""
+        from harness.__main__ import run_repl
+
+        loop = MagicMock()
+        loop.run.return_value = _ok_result()
+        sessions = _mock_sessions(_message_records(2))
+        sessions.session_ids.return_value = ["s1"]
+        writer = _Writer()
+        run_repl(
+            loop, sessions, RuntimeConfig(), ["/switch", "你好", "/exit"],
+            writer, session_id="s1",
+        )
+        assert "用法" in writer.text
+        assert "/switch" in writer.text
+        assert loop.run.call_count == 1
+        assert loop.run.call_args.args[1] == "s1"
+
+    def testCommandSwitchExtraArgUsage(self) -> None:
+        """/switch 多余参数：输出用法提示，不进入 LLM。"""
+        from harness.__main__ import run_repl
+
+        loop = MagicMock()
+        loop.run.return_value = _ok_result()
+        sessions = _mock_sessions(_message_records(2))
+        sessions.session_ids.return_value = ["s1"]
+        writer = _Writer()
+        run_repl(
+            loop, sessions, RuntimeConfig(), ["/switch a b", "/exit"],
+            writer, session_id="s1",
+        )
+        assert "用法" in writer.text
+        assert loop.run.call_count == 0
+
+    def testCommandSwitchInvokesCallback(self) -> None:
+        """切换成功：on_session_change 以目标 id 恰调用 1 次。"""
+        from harness.__main__ import run_repl
+
+        loop = MagicMock()
+        loop.run.return_value = _ok_result()
+        sessions = _mock_sessions(_message_records(2))
+        sessions.session_ids.return_value = ["s1", "s2"]
+        callback = MagicMock()
+        writer = _Writer()
+        run_repl(
+            loop, sessions, RuntimeConfig(), ["/switch s2", "你好", "/exit"],
+            writer, session_id="s1", on_session_change=callback,
+        )
+        assert callback.call_count == 1
+        assert callback.call_args.args[0] == "s2"
+        assert loop.run.call_args.args[1] == "s2"
+
+    def testCommandSwitchCurrentSessionIdempotent(self) -> None:
+        """切换到当前会话：幂等处理，正常输出切换提示。"""
+        from harness.__main__ import run_repl
+
+        loop = MagicMock()
+        loop.run.return_value = _ok_result()
+        sessions = _mock_sessions(_message_records(2))
+        sessions.session_ids.return_value = ["s1"]
+        callback = MagicMock()
+        writer = _Writer()
+        run_repl(
+            loop, sessions, RuntimeConfig(), ["/switch s1", "你好", "/exit"],
+            writer, session_id="s1", on_session_change=callback,
+        )
+        assert "已切换会话 s1" in writer.text
+        assert callback.call_count == 1
+        assert callback.call_args.args[0] == "s1"
+        assert loop.run.call_args.args[1] == "s1"
+
+    def testCommandSwitchNotRoutedToLoop(self) -> None:
+        """切换命令本身不进入 LLM：loop.run 0 次调用。"""
+        from harness.__main__ import run_repl
+
+        loop = MagicMock()
+        loop.run.return_value = _ok_result()
+        sessions = _mock_sessions(_message_records(2))
+        sessions.session_ids.return_value = ["s1", "s2"]
+        writer = _Writer()
+        run_repl(
+            loop, sessions, RuntimeConfig(), ["/switch s2", "/exit"],
+            writer, session_id="s1",
+        )
+        assert loop.run.call_count == 0
+        assert "已切换会话 s2" in writer.text
+
+    def testCommandSwitchEmptySessionNoMessageCount(self) -> None:
+        """切换到空历史会话：提示不带消息计数。"""
+        from harness.__main__ import run_repl
+
+        loop = MagicMock()
+        loop.run.return_value = _ok_result()
+        sessions = _mock_sessions([])
+        sessions.session_ids.return_value = ["s1", "s2"]
+        writer = _Writer()
+        run_repl(
+            loop, sessions, RuntimeConfig(), ["/switch s2", "/exit"],
+            writer, session_id="s1",
+        )
+        switch_lines = [ln for ln in writer.lines if "已切换会话 s2" in ln]
+        assert switch_lines == ["已切换会话 s2"]
