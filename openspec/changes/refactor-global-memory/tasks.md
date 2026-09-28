@@ -14,7 +14,7 @@ T1（全局存储层 + 注入切换） → T2（后台增量提取） → T3（r
 
 ## Task 1
 
-- [ ] Task 1: 全局 MEMORY 目录存储层与上下文注入切换
+- [x] Task 1: 全局 MEMORY 目录存储层与上下文注入切换
   - complexity: 🟢
   - files: Rewrite `src/harness/memory/store.py`、`tests/memory/test_memory_store.py`；Modify `src/harness/context/builder.py`、`src/harness/__main__.py`（仅 `MemoryStore(config.data_dir)` 一行构造）、`tests/context/test_builder.py`
   - 说明: `MemoryStore` 重写为 `<data_dir>/MEMORY/` 唯一管理者（`append` / `render_index` / `read` / `summarized_ordinal` / `mark_summarized`，构造不再接 llm）；`ContextBuilder` 记忆段改为全局索引注入（`render_index()` 无 session 参数；`MEMORY_SECTION_HEADER` 不变；本 task 尚不加 read_memory 提示行——那是 T3 的产物）。注：T1 完成到 T2 完成之间，旧 `summarizer.py` 调用的 `render_summary`/`write` 已不存在，后台线程按会话捕获异常仅告警，不影响测试套件全绿。
@@ -46,7 +46,7 @@ T1（全局存储层 + 注入切换） → T2（后台增量提取） → T3（r
 
 ## Task 2
 
-- [ ] Task 2: 后台闲置增量提取（JSON 提取 + 追加写入 + 进度推进）
+- [x] Task 2: 后台闲置增量提取（JSON 提取 + 追加写入 + 进度推进）
   - complexity: 🟢
   - files: Rewrite `src/harness/memory/summarizer.py`、`tests/memory/test_summarizer.py`；Modify `src/harness/prompts.py`（`MEMORY_SUMMARY_PROMPT` → `MEMORY_EXTRACT_PROMPT` 重写；删除 `MEMORY_MERGE_PROMPT`）
   - 说明: 保留线程模型（`start` / `stop` / `_run` / `_is_idle`）与 trace 行为（`start_trace` + `start_llm_span(kind="idle_summary")` + `end_llm_span` 含 usage）；`scan_once` 改为「闲置 → 取进度之后的消息 → LLM JSON 提取 → 校验 → `append` → `mark_summarized`」；`_parse_extraction` 对 LLM 输出显式校验（非法 → 异常 → 本轮跳过、进度不推进）。
@@ -75,7 +75,7 @@ T1（全局存储层 + 注入切换） → T2（后台增量提取） → T3（r
 
 ## Task 3
 
-- [ ] Task 3: read_memory 工具、注册与提示词收尾
+- [x] Task 3: read_memory 工具、注册与提示词收尾
   - complexity: 🟢
   - files: Add `src/harness/tools/read_memory.py`；Modify `src/harness/__main__.py`（`_build_registry` 增加 memory 参数并注册 `ReadMemoryTool`）、`src/harness/context/builder.py`（新增 `MEMORY_TOOL_HINT` 常量并在记忆段末尾追加提示行）、`src/harness/prompts.py`（`SYSTEM_PROMPT` 末段改为索引 + read_memory 表述）、`tests/tools/test_builtin_tools.py`（新增 `TestReadMemoryTool`）、`tests/context/test_builder.py`（`testMemoryInjected` 追加提示行断言）、`tests/test_cli.py`（如有 `_build_registry` 签名相关用例则适配）
   - RED:
