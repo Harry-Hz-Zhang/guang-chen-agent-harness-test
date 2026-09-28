@@ -11,7 +11,6 @@ REPL 内置命令：/exit 退出、/new 新会话、/switch <id> 切换已有会
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 import secrets
 import sys
 from typing import Any, Callable, Iterable
@@ -25,12 +24,10 @@ from harness.memory.store import MemoryStore
 from harness.memory.summarizer import MemorySummarizer
 from harness.middleware import Middleware
 from harness.session.store import SessionStore
-from harness.tools.base import BaseTool
 from harness.tools.calculator import CalculatorTool
 from harness.tools.read_memory import ReadMemoryTool
 from harness.tools.registry import ToolRegistry
 from harness.tools.search import SearchTool
-from harness.tools.todo import TodoTool
 from harness.tools.weather import WeatherTool
 from harness.trace import JsonlExporter, TraceCollector
 
@@ -45,34 +42,6 @@ _HISTORY_COMMAND = "/history"
 from harness.renderer import DEFAULT_REASONING_PREFIX, StreamRenderer, render_event
 
 _REASONING_PREFIX = DEFAULT_REASONING_PREFIX
-
-
-class RebindableTodoTool(BaseTool):
-    """会话可重绑定的待办管理工具包装器。
-
-    持有一个包含当前 session_id 的字典引用（{"session_id": "..."}），
-    当用户通过 /new 等命令切换会话时，动态委托到对应会话的 TodoTool，
-    实现多会话隔离存储的无缝切换。
-    """
-
-    name: str = TodoTool.name
-    description: str = TodoTool.description
-    parameters: dict = TodoTool.parameters
-
-    def __init__(self, data_dir: Path, session_ref: dict[str, str]) -> None:
-        """保存数据根目录与当前会话引用字典。"""
-        self._data_dir: Path = data_dir
-        self._session_ref: dict[str, str] = session_ref
-
-    @property
-    def session_id(self) -> str:
-        """返回当前绑定的会话 id。"""
-        return self._session_ref["session_id"]
-
-    def execute(self, **kwargs: Any) -> str:
-        """按当前 session_id 构造 TodoTool 并执行。"""
-        tool = TodoTool(self._data_dir, self.session_id)
-        return tool.execute(**kwargs)
 
 
 def _generate_session_id() -> str:
@@ -99,7 +68,6 @@ def run_repl(
     writer: Writer,
     session_id: str | None = None,
     raw_writer: Writer | None = None,
-    on_session_change: Callable[[str], None] | None = None,
 ) -> str:
     """执行 REPL 交互循环，返回最终会话 id。
 
@@ -109,8 +77,6 @@ def run_repl(
     """
     if session_id is None:
         session_id = _generate_session_id()
-        if on_session_change is not None:
-            on_session_change(session_id)
         writer(f"已创建新会话 {session_id}（命令：/new 新会话、/switch <id> 切换会话、/sessions 全部会话、/history 概览、/exit 退出）")
     else:
         message_count = sum(
@@ -133,8 +99,6 @@ def run_repl(
             break
         if text == _NEW_COMMAND:
             session_id = _generate_session_id()
-            if on_session_change is not None:
-                on_session_change(session_id)
             writer(f"已创建新会话 {session_id}")
             continue
         if text == _SESSIONS_COMMAND:
@@ -168,8 +132,6 @@ def run_repl(
                 writer(f"会话 {target} 不存在，可用 /sessions 查看全部会话")
                 continue
             session_id = target
-            if on_session_change is not None:
-                on_session_change(target)
             message_count = sum(
                 1
                 for record in sessions.load_records(target)
@@ -212,21 +174,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _build_registry(
-    config: RuntimeConfig,
-    session_ref: dict[str, str] | str,
-    memory: MemoryStore,
-) -> ToolRegistry:
-    """注册五个内置工具（todo 绑定 session_ref 指向的会话，read_memory 绑定全局记忆）。"""
+def _build_registry(memory: MemoryStore) -> ToolRegistry:
+    """注册四个内置工具（calculator / search / weather / read_memory，read_memory 绑定全局记忆）。"""
     registry = ToolRegistry()
     registry.register(CalculatorTool())
     registry.register(SearchTool())
     registry.register(WeatherTool())
-    if isinstance(session_ref, str):
-        ref = {"session_id": session_ref}
-    else:
-        ref = session_ref
-    registry.register(RebindableTodoTool(config.data_dir, ref))
     registry.register(ReadMemoryTool(memory))
     return registry
 
@@ -256,15 +209,11 @@ def main(
         return 1
 
     session_id = args.session if args.session else _generate_session_id()
-    session_ref: dict[str, str] = {"session_id": session_id}
-
-    def on_session_change(new_session_id: str) -> None:
-        session_ref["session_id"] = new_session_id
 
     sessions = SessionStore(config.data_dir)
     memory = MemoryStore(config.data_dir)
     builder = ContextBuilder(sessions, memory, config)
-    registry = _build_registry(config, session_ref, memory)
+    registry = _build_registry(memory)
     trace = TraceCollector(JsonlExporter(config.data_dir / "traces"))
     compressor = ContextCompressor(sessions, llm, trace, config)
     middlewares: list[Middleware] = [CompactionMiddleware(compressor)]
@@ -281,7 +230,6 @@ def main(
             output,
             session_id=session_id,
             raw_writer=_default_raw_writer,
-            on_session_change=on_session_change,
         )
     finally:
         summarizer.stop()

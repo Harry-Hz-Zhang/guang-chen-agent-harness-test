@@ -14,21 +14,16 @@ from harness.loop import LoopResult
 class TestRegistryAssembly:
 
     def testRegistryIncludesReadMemory(self, tmp_path: Path) -> None:
-        """_build_registry 注册 read_memory（绑定全局记忆存储），其余内置工具不受影响。"""
+        """_build_registry 注册 read_memory（绑定全局记忆存储）及 calculator / search / weather。"""
         from harness.__main__ import _build_registry
         from harness.memory.store import MemoryStore
 
-        registry = _build_registry(
-            RuntimeConfig(data_dir=tmp_path),
-            {"session_id": "s1"},
-            MemoryStore(tmp_path),
-        )
+        registry = _build_registry(MemoryStore(tmp_path))
         names = registry.names()
         assert "read_memory" in names
         assert "calculator" in names
         assert "search" in names
         assert "weather" in names
-        assert "todo" in names
         assert registry.get("read_memory").name == "read_memory"
 
 
@@ -327,39 +322,6 @@ class TestSessionManagement:
         assert "3" in writer.text
         assert "最近压缩" in writer.text
 
-    def testOnSessionChangeCallbackInvoked(self) -> None:
-        """/new 切会话时通知 on_session_change 回调（todo 换绑依据）。"""
-        from harness.__main__ import run_repl
-
-        loop = MagicMock()
-        loop.run.return_value = _ok_result()
-        callback = MagicMock()
-        writer = _Writer()
-        run_repl(
-            loop, _mock_sessions(), RuntimeConfig(), ["/new", "你好", "/exit"],
-            writer, session_id="s1", on_session_change=callback,
-        )
-        callback.assert_called_once()
-        new_id = callback.call_args.args[0]
-        assert new_id != "s1"
-        assert loop.run.call_args.args[1] == new_id
-
-    def testRebindableTodoToolSwitchesSession(self, tmp_path: Any) -> None:
-        """RebindableTodoTool 按 ref 当前会话换绑存储文件。"""
-        from pathlib import Path
-
-        from harness.__main__ import RebindableTodoTool
-
-        ref: dict[str, str] = {"session_id": "s1"}
-        tool = RebindableTodoTool(Path(tmp_path), ref)
-        added = tool.execute(action="add", todo="写周报")
-        assert "1" in added
-        assert (tmp_path / "todos" / "s1.json").exists()
-        ref["session_id"] = "s2"
-        listing = tool.execute(action="list")
-        assert "暂无" in listing
-        assert not (tmp_path / "todos" / "s2.json").exists()
-
 
 class TestSessionSwitch:
     """/switch 会话切换命令的单元测试（全 mock loop/sessions，零网络）。"""
@@ -433,24 +395,6 @@ class TestSessionSwitch:
         assert "用法" in writer.text
         assert loop.run.call_count == 0
 
-    def testCommandSwitchInvokesCallback(self) -> None:
-        """切换成功：on_session_change 以目标 id 恰调用 1 次。"""
-        from harness.__main__ import run_repl
-
-        loop = MagicMock()
-        loop.run.return_value = _ok_result()
-        sessions = _mock_sessions(_message_records(2))
-        sessions.session_ids.return_value = ["s1", "s2"]
-        callback = MagicMock()
-        writer = _Writer()
-        run_repl(
-            loop, sessions, RuntimeConfig(), ["/switch s2", "你好", "/exit"],
-            writer, session_id="s1", on_session_change=callback,
-        )
-        assert callback.call_count == 1
-        assert callback.call_args.args[0] == "s2"
-        assert loop.run.call_args.args[1] == "s2"
-
     def testCommandSwitchCurrentSessionIdempotent(self) -> None:
         """切换到当前会话：幂等处理，正常输出切换提示。"""
         from harness.__main__ import run_repl
@@ -459,15 +403,12 @@ class TestSessionSwitch:
         loop.run.return_value = _ok_result()
         sessions = _mock_sessions(_message_records(2))
         sessions.session_ids.return_value = ["s1"]
-        callback = MagicMock()
         writer = _Writer()
         run_repl(
             loop, sessions, RuntimeConfig(), ["/switch s1", "你好", "/exit"],
-            writer, session_id="s1", on_session_change=callback,
+            writer, session_id="s1",
         )
         assert "已切换会话 s1" in writer.text
-        assert callback.call_count == 1
-        assert callback.call_args.args[0] == "s1"
         assert loop.run.call_args.args[1] == "s1"
 
     def testCommandSwitchNotRoutedToLoop(self) -> None:

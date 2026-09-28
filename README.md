@@ -35,7 +35,7 @@ uv run pytest
 
 REPL 内置命令（不进入 LLM）：`/exit` 退出、`/new` 切换新会话、`/sessions` 列出全部会话、`/history` 当前会话概览。
 
-运行期产物全部落在 `data/`（已 gitignore）：`sessions/<id>.jsonl`（会话）、`memory/<id>/`（长期记忆）、`traces/<id>.jsonl`（调用追踪）、`todos/<id>.json`（待办）。
+运行期产物全部落在 `data/`（已 gitignore）：`sessions/<id>.jsonl`（会话）、`memory/<id>/`（长期记忆）、`traces/<id>.jsonl`（调用追踪）。
 
 ## 二、系统设计（模块图）
 
@@ -67,7 +67,7 @@ src/harness/
 ├── loop.py            # ReactLoop（主循环 + middleware 编排 + 决策轮上限）
 ├── middleware.py      # Middleware 基类（before_model/after_model/wrap_tool_call）
 ├── trace.py           # TraceCollector + JsonlExporter（OTel GenAI 命名对齐）
-├── tools/             # BaseTool/ToolRegistry + calculator(ast 白名单)/search/weather/todo
+├── tools/             # BaseTool/ToolRegistry + calculator(ast 白名单)/search/weather/read_memory
 ├── session/store.py   # SessionStore（JSONL append-only，一會话一文件）
 ├── context/           # ContextBuilder + estimate_tokens；ContextCompressor + CompactionMiddleware
 └── memory/            # MemoryStore（SHA-256 去重 + LLM 四动作合并）；MemorySummarizer（闲置总结）
