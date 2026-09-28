@@ -81,8 +81,8 @@ class ContextBuilder:
         轮历史已含当前输入，传空串避免重复）。
         """
         history = self._sessions.read_context_messages(session_id)
-        memory_summary = self._memory.render_summary(session_id)
-        messages: list[dict[str, Any]] = [self._build_system_message(memory_summary)]
+        memory_index = self._memory.render_index()
+        messages: list[dict[str, Any]] = [self._build_system_message(memory_index)]
         for message in history:
             messages.append(self._adapt_history_message(message))
         if user_input:
@@ -90,11 +90,11 @@ class ContextBuilder:
         return messages
 
     def _build_system_message(
-        self, memory_summary: str | None
+        self, memory_index: str | None
     ) -> dict[str, Any]:
-        """构造 system 消息：无记忆时为 SYSTEM_PROMPT 原文，有记忆时追加记忆段。"""
-        if memory_summary:
-            content = f"{SYSTEM_PROMPT}\n\n{MEMORY_SECTION_HEADER}\n{memory_summary}"
+        """构造 system 消息：无全局记忆索引时为 SYSTEM_PROMPT 原文，有则追加记忆段。"""
+        if memory_index:
+            content = f"{SYSTEM_PROMPT}\n\n{MEMORY_SECTION_HEADER}\n{memory_index}"
         else:
             content = SYSTEM_PROMPT
         return {"role": "system", "content": content}
