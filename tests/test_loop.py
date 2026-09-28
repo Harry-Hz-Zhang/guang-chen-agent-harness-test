@@ -152,7 +152,7 @@ def _make_loop(
     sessions = SessionStore(tmp_path)
     if memory is None:
         memory = MagicMock()
-        memory.render_summary.return_value = None
+        memory.render_index.return_value = None
     builder = ContextBuilder(sessions, memory, resolved_config)
     llm = FakeLLM(responses, stream_mode=fake_stream)
     resolved_registry = registry if registry is not None else ToolRegistry()
@@ -295,7 +295,7 @@ class TestReactLoop:
     def testToolErrorNoSideEffects(self, tmp_path: Path) -> None:
         """工具错误不写长期记忆、不派生额外记录、LoopResult 正常返回。"""
         memory = MagicMock()
-        memory.render_summary.return_value = None
+        memory.render_index.return_value = None
         registry = ToolRegistry()
         registry.register(_BoomTool())
         call = ToolCall(id="call_1", name="boom", arguments_raw="{}", args={})
@@ -309,7 +309,7 @@ class TestReactLoop:
         result = loop.run("再炸一次", "s1")
         assert result.answer == "恢复"
         assert result.truncated is False
-        assert memory.write.call_count == 0
+        assert memory.append.call_count == 0
         roles = [m.get("role") for m in _messages(sessions, "s1")]
         assert roles == ["user", "assistant", "tool", "assistant"]
 

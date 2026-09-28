@@ -258,7 +258,7 @@ def main(
         session_ref["session_id"] = new_session_id
 
     sessions = SessionStore(config.data_dir)
-    memory = MemoryStore(config.data_dir, llm)
+    memory = MemoryStore(config.data_dir)
     builder = ContextBuilder(sessions, memory, config)
     registry = _build_registry(config, session_ref)
     trace = TraceCollector(JsonlExporter(config.data_dir / "traces"))
