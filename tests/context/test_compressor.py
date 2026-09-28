@@ -109,7 +109,7 @@ class TestCompressor:
         compressor, sessions, _ = _make_compressor(config, records)
         compressor.compact("s1", "tid-9")
         sessions.append_compaction.assert_called_once_with(
-            "s1", 19, "任务概览：调试登录问题", config.model
+            "s1", 19, "任务概览：调试登录问题"
         )
 
     def testKeepRecentRoundsCountsPairsNotMessages(self) -> None:
