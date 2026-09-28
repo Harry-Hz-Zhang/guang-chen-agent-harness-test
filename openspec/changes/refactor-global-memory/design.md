@@ -132,8 +132,9 @@ for session_id in sessions.session_ids():
 `MEMORY_SUMMARY_PROMPT` 重写为 `MEMORY_EXTRACT_PROMPT`，`MEMORY_MERGE_PROMPT` 删除：
 
 ```text
-你是记忆提取助手。请阅读以下对话记录，提取值得长期记住的信息
-（用户偏好、关键事实、约定、未完成事项等）。
+你是记忆提取助手。请阅读以下对话记录，提取值得长期记住的用户相关信息
+（用户偏好、个人事实、约定等）。
+不要记录待办事项、工具调用过程或一次性的问答内容。
 只输出一个 JSON 对象，不要输出任何其他文字，格式：
 {"memories": ["一条记忆（中文，简洁，一件事一条）", ...], "tags": ["少量分类标签", ...]}
 若没有值得记住的信息，输出 {"memories": [], "tags": []}。
