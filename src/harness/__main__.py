@@ -27,6 +27,7 @@ from harness.middleware import Middleware
 from harness.session.store import SessionStore
 from harness.tools.base import BaseTool
 from harness.tools.calculator import CalculatorTool
+from harness.tools.read_memory import ReadMemoryTool
 from harness.tools.registry import ToolRegistry
 from harness.tools.search import SearchTool
 from harness.tools.todo import TodoTool
@@ -212,9 +213,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 
 def _build_registry(
-    config: RuntimeConfig, session_ref: dict[str, str] | str
+    config: RuntimeConfig,
+    session_ref: dict[str, str] | str,
+    memory: MemoryStore,
 ) -> ToolRegistry:
-    """注册四个内置工具（todo 绑定 session_ref 指向的会话）。"""
+    """注册五个内置工具（todo 绑定 session_ref 指向的会话，read_memory 绑定全局记忆）。"""
     registry = ToolRegistry()
     registry.register(CalculatorTool())
     registry.register(SearchTool())
@@ -224,6 +227,7 @@ def _build_registry(
     else:
         ref = session_ref
     registry.register(RebindableTodoTool(config.data_dir, ref))
+    registry.register(ReadMemoryTool(memory))
     return registry
 
 
@@ -260,7 +264,7 @@ def main(
     sessions = SessionStore(config.data_dir)
     memory = MemoryStore(config.data_dir)
     builder = ContextBuilder(sessions, memory, config)
-    registry = _build_registry(config, session_ref)
+    registry = _build_registry(config, session_ref, memory)
     trace = TraceCollector(JsonlExporter(config.data_dir / "traces"))
     compressor = ContextCompressor(sessions, llm, trace, config)
     middlewares: list[Middleware] = [CompactionMiddleware(compressor)]

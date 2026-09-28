@@ -7,7 +7,11 @@ from typing import Any
 from unittest.mock import MagicMock
 
 from harness.config import RuntimeConfig
-from harness.context.builder import ContextBuilder, estimate_tokens
+from harness.context.builder import (
+    MEMORY_TOOL_HINT,
+    ContextBuilder,
+    estimate_tokens,
+)
 from harness.llm import ToolCall
 from harness.middleware import LoopState, Middleware
 from harness.prompts import SYSTEM_PROMPT
@@ -53,9 +57,11 @@ class TestContextBuilder:
         system_content = out[0]["content"]
         assert "历史记忆" in system_content
         assert "用户偏好中文" in system_content
+        assert MEMORY_TOOL_HINT in system_content
         assert system_content == (
             SYSTEM_PROMPT
             + "\n\n## 历史记忆\n- 20260928-143005.md｜用户偏好中文（tags: 偏好）"
+            + f"\n{MEMORY_TOOL_HINT}"
         )
 
     def testSummaryMessageKeptFirst(self) -> None:

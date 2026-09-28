@@ -20,6 +20,9 @@ SUMMARY_MARKER_LINE: str = "以下为此前对话的压缩摘要"
 # 记忆段注入 system 提示词时的小节标题
 MEMORY_SECTION_HEADER: str = "## 历史记忆"
 
+# 记忆索引段末尾的 read_memory 工具使用提示
+MEMORY_TOOL_HINT: str = "（如需某条记忆的完整内容，用 read_memory 工具按文件名读取）"
+
 # 工具结果截断尾注（存储留全量，上下文只保留前缀）
 TOOL_RESULT_TRUNCATION_SUFFIX: str = "\n…[已截断，全文见会话记录]"
 
@@ -92,9 +95,12 @@ class ContextBuilder:
     def _build_system_message(
         self, memory_index: str | None
     ) -> dict[str, Any]:
-        """构造 system 消息：无全局记忆索引时为 SYSTEM_PROMPT 原文，有则追加记忆段。"""
+        """构造 system 消息：无全局记忆索引时为 SYSTEM_PROMPT 原文，有则追加索引段与工具提示。"""
         if memory_index:
-            content = f"{SYSTEM_PROMPT}\n\n{MEMORY_SECTION_HEADER}\n{memory_index}"
+            content = (
+                f"{SYSTEM_PROMPT}\n\n{MEMORY_SECTION_HEADER}\n{memory_index}"
+                f"\n{MEMORY_TOOL_HINT}"
+            )
         else:
             content = SYSTEM_PROMPT
         return {"role": "system", "content": content}

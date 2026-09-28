@@ -1,11 +1,13 @@
-"""内置工具单元测试：calculator ast 白名单安全求值、search/weather 预置数据、todo 会话隔离与持久化。"""
+"""内置工具单元测试：calculator ast 白名单安全求值、search/weather 预置数据、todo 会话隔离与持久化、read_memory 记忆读取。"""
 
 from pathlib import Path
 
 import pytest
 
+from harness.memory.store import MemoryStore
 from harness.tools.base import ToolExecutionError
 from harness.tools.calculator import CalculatorTool
+from harness.tools.read_memory import ReadMemoryTool
 from harness.tools.search import KNOWLEDGE_BASE, SearchTool
 from harness.tools.todo import TodoTool
 from harness.tools.weather import WeatherTool
@@ -173,3 +175,57 @@ class TestTodo:
         """含 Windows 保留字符（冒号等）的 session_id 在构造期即被拒绝：抛 ToolExecutionError。"""
         with pytest.raises(ToolExecutionError, match="session_id"):
             TodoTool(data_dir=tmp_path, session_id="a:b")
+
+
+class TestReadMemoryTool:
+    """覆盖 read_memory 的正常读取、未找到提示与非法文件名拒绝。"""
+
+    @staticmethod
+    def _make_tool(tmp_path: Path) -> ReadMemoryTool:
+        """构造绑定了真实 MemoryStore 的 ReadMemoryTool，并预置一条记忆。"""
+        memory_dir = tmp_path / "MEMORY"
+        memory_dir.mkdir()
+        (memory_dir / "20260928-143005.md").write_text(
+            "日期：2026-09-28\n\n- 用户偏好简洁回复\n", encoding="utf-8"
+        )
+        return ReadMemoryTool(MemoryStore(tmp_path))
+
+    def testReadExistingMemoryFile(self, tmp_path: Path) -> None:
+        """按索引文件名读取记忆全文（含日期行）。"""
+        tool = self._make_tool(tmp_path)
+        content = tool.execute(file="20260928-143005.md")
+        assert content.startswith("日期：")
+        assert "- 用户偏好简洁回复" in content
+
+    def testReadMissingMemoryFileFriendlyMessage(self, tmp_path: Path) -> None:
+        """文件不存在返回友好提示字符串，不抛异常。"""
+        tool = self._make_tool(tmp_path)
+        result = tool.execute(file="nope.md")
+        assert "未找到记忆文件" in result
+        assert "nope.md" in result
+
+    def testInvalidFileParamRaises(self, tmp_path: Path) -> None:
+        """空文件名抛 ToolExecutionError。"""
+        tool = self._make_tool(tmp_path)
+        with pytest.raises(ToolExecutionError, match="file"):
+            tool.execute(file="")
+
+    def testNonMdExtensionRaises(self, tmp_path: Path) -> None:
+        """非 .md 后缀抛 ToolExecutionError。"""
+        tool = self._make_tool(tmp_path)
+        with pytest.raises(ToolExecutionError, match="file"):
+            tool.execute(file="MEMORY.md.txt")
+
+    def testTraversalPathRejected(self, tmp_path: Path) -> None:
+        """路径穿越形态（../ 与子目录）抛 ToolExecutionError，data_dir 外零读取。"""
+        tool = self._make_tool(tmp_path)
+        with pytest.raises(ToolExecutionError, match="file"):
+            tool.execute(file="../state.json")
+        with pytest.raises(ToolExecutionError, match="file"):
+            tool.execute(file="a/b.md")
+
+    def testNonStringParamRaises(self, tmp_path: Path) -> None:
+        """非字符串参数抛 ToolExecutionError。"""
+        tool = self._make_tool(tmp_path)
+        with pytest.raises(ToolExecutionError, match="file"):
+            tool.execute(file=None)

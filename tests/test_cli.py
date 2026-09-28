@@ -1,5 +1,6 @@
 """CLI REPL 的单元测试（全 mock loop/sessions，零网络）。"""
 
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -8,6 +9,27 @@ import pytest
 from harness.config import RuntimeConfig
 from harness.llm import LLMError, ReasoningDelta, TextDelta
 from harness.loop import LoopResult
+
+
+class TestRegistryAssembly:
+
+    def testRegistryIncludesReadMemory(self, tmp_path: Path) -> None:
+        """_build_registry 注册 read_memory（绑定全局记忆存储），其余内置工具不受影响。"""
+        from harness.__main__ import _build_registry
+        from harness.memory.store import MemoryStore
+
+        registry = _build_registry(
+            RuntimeConfig(data_dir=tmp_path),
+            {"session_id": "s1"},
+            MemoryStore(tmp_path),
+        )
+        names = registry.names()
+        assert "read_memory" in names
+        assert "calculator" in names
+        assert "search" in names
+        assert "weather" in names
+        assert "todo" in names
+        assert registry.get("read_memory").name == "read_memory"
 
 
 def _ok_result(answer: str = "回答") -> LoopResult:
