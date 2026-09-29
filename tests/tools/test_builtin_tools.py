@@ -1,14 +1,19 @@
-"""内置工具单元测试：calculator ast 白名单安全求值、search/weather 预置数据、read_memory 记忆读取。"""
+"""内置工具单元测试：calculator 安全求值、search/weather 预置数据、read_memory 记忆读取、write_todos 会话隔离待办。"""
 
+import threading
+from contextlib import contextmanager
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
 from harness.memory.store import MemoryStore
+from harness.state import CURRENT_SESSION_ID, RuntimeState
 from harness.tools.base import ToolExecutionError
 from harness.tools.calculator import CalculatorTool
 from harness.tools.read_memory import ReadMemoryTool
 from harness.tools.search import KNOWLEDGE_BASE, SearchTool
+from harness.tools.todo import WriteTodosTool
 from harness.tools.weather import WeatherTool
 
 _WEATHER_TERMS: tuple[str, ...] = ("晴", "多云", "阴", "雨", "雪", "阵雨")
@@ -173,3 +178,131 @@ class TestReadMemoryTool:
         tool = self._make_tool(tmp_path)
         with pytest.raises(ToolExecutionError, match="file"):
             tool.execute(file=None)
+
+
+@contextmanager
+def _session_context(session_id: str) -> Iterator[None]:
+    """在测试内绑定会话上下文（结束后复位，不泄漏到其他用例）。"""
+    token = CURRENT_SESSION_ID.set(session_id)
+    try:
+        yield
+    finally:
+        CURRENT_SESSION_ID.reset(token)
+
+
+class TestWriteTodos:
+    """覆盖 write_todos 的会话隔离、上下文绑定、入参校验与全量替换语义。"""
+
+    def _make_tool(self, state: RuntimeState) -> WriteTodosTool:
+        """构造绑定指定公共状态的 write_todos 工具。"""
+        return WriteTodosTool(state)
+
+    @staticmethod
+    def _todo(content: str, status: str = "pending") -> dict:
+        """构造一条合法待办项。"""
+        return {"content": content, "status": status}
+
+    def testSessionIsolatedState(self) -> None:
+        """两会话各自写入互不可见：todos 按会话隔离。"""
+        state = RuntimeState()
+        tool = self._make_tool(state)
+        with _session_context("s1"):
+            tool.execute(todos=[self._todo("任务甲"), self._todo("任务乙")])
+        with _session_context("s2"):
+            tool.execute(todos=[self._todo("任务丙")])
+        assert [t["content"] for t in state.todos("s1")] == ["任务甲", "任务乙"]
+        assert [t["content"] for t in state.todos("s2")] == ["任务丙"]
+
+    def testFullReplaceOverwrites(self) -> None:
+        """同会话再次写入为全量替换，旧列表整体失效。"""
+        state = RuntimeState()
+        tool = self._make_tool(state)
+        with _session_context("s1"):
+            tool.execute(todos=[self._todo(f"旧任务{i}") for i in range(3)])
+            tool.execute(todos=[self._todo("新任务A"), self._todo("新任务B")])
+        assert [t["content"] for t in state.todos("s1")] == ["新任务A", "新任务B"]
+
+    def testMissingSessionContextRejected(self) -> None:
+        """未绑定会话上下文时结构化报错（match 会话）。"""
+        state = RuntimeState()
+        tool = self._make_tool(state)
+        with pytest.raises(ToolExecutionError, match="会话"):
+            tool.execute(todos=[self._todo("任务")])
+
+    def testStatusEnumRejected(self) -> None:
+        """非法 status 抛 ToolExecutionError（match status）。"""
+        state = RuntimeState()
+        tool = self._make_tool(state)
+        with _session_context("s1"), pytest.raises(ToolExecutionError, match="status"):
+            tool.execute(todos=[self._todo("任务", status="done")])
+
+    def testEmptyContentRejected(self) -> None:
+        """空白 content 抛 ToolExecutionError（match content）。"""
+        state = RuntimeState()
+        tool = self._make_tool(state)
+        with _session_context("s1"), pytest.raises(
+            ToolExecutionError, match="content"
+        ):
+            tool.execute(todos=[self._todo("   ")])
+
+    def testNonListTodosRejected(self) -> None:
+        """todos 非数组抛 ToolExecutionError（match 数组）。"""
+        state = RuntimeState()
+        tool = self._make_tool(state)
+        with _session_context("s1"), pytest.raises(ToolExecutionError, match="数组"):
+            tool.execute(todos="不是数组")
+
+    def testEmptyListClears(self) -> None:
+        """写入空列表清空当前会话待办，返回含「清空」。"""
+        state = RuntimeState()
+        tool = self._make_tool(state)
+        with _session_context("s1"):
+            tool.execute(todos=[self._todo("任务A"), self._todo("任务B")])
+            result = tool.execute(todos=[])
+        assert state.todos("s1") == []
+        assert "清空" in result
+
+    def testResultRendersStatus(self) -> None:
+        """返回文本按编号与中文状态渲染待办。"""
+        state = RuntimeState()
+        tool = self._make_tool(state)
+        with _session_context("s1"):
+            result = tool.execute(todos=[
+                self._todo("调研", "in_progress"),
+                self._todo("写方案", "completed"),
+                self._todo("收尾", "pending"),
+            ])
+        assert "1. [进行中] 调研" in result
+        assert "2. [已完成] 写方案" in result
+        assert "3. [待办] 收尾" in result
+
+    def testConcurrentSessionsIsolated(self) -> None:
+        """双线程各自绑定会话并发写入，结果按会话隔离、互不串扰。"""
+        state = RuntimeState()
+        tool = self._make_tool(state)
+
+        def _worker(session_id: str, marker: str, errors: list[str]) -> None:
+            """在线程内绑定会话并以递增清单连续全量替换 20 次。"""
+            token = CURRENT_SESSION_ID.set(session_id)
+            try:
+                for i in range(20):
+                    tool.execute(todos=[self._todo(f"{marker}{j}") for j in range(i + 1)])
+            except Exception as exc:  # pragma: no cover - 记录线程内意外失败
+                errors.append(f"{session_id}: {exc}")
+            finally:
+                CURRENT_SESSION_ID.reset(token)
+
+        errors: list[str] = []
+        threads = [
+            threading.Thread(target=_worker, args=("s1", "甲", errors)),
+            threading.Thread(target=_worker, args=("s2", "乙", errors)),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert errors == []
+        assert len(state.todos("s1")) == 20
+        assert state.todos("s1")[0]["content"] == "甲0"
+        assert len(state.todos("s2")) == 20
+        assert state.todos("s2")[0]["content"] == "乙0"

@@ -8,6 +8,7 @@ from harness.tools.registry import (
     ToolRegistry,
 )
 from harness.tools.search import SearchTool
+from harness.tools.todo import WriteTodosTool
 from harness.tools.weather import WeatherTool
 
 __all__ = [
@@ -18,5 +19,6 @@ __all__ = [
     "ToolNotFoundError",
     "CalculatorTool",
     "SearchTool",
+    "WriteTodosTool",
     "WeatherTool",
 ]

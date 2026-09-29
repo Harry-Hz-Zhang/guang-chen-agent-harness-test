@@ -1,0 +1,42 @@
+# Tasks — write_todos 工具加回（RuntimeState 会话隔离 + ContextVar 并发绑定）
+
+- [x] Task 1: 新增 state.py 与 todo.py，单元测试先行
+  - complexity: 🟡
+  - files: Create `src/harness/state.py`、`src/harness/tools/todo.py`；Modify `src/harness/tools/__init__.py`、`tests/tools/test_builtin_tools.py`
+  - RED:
+    - 先改测试：`tests/tools/test_builtin_tools.py` 新增 `_session_context` 辅助与 `TestWriteTodos`（9 用例，design.md §6.1）
+    - `uv run pytest tests/tools/test_builtin_tools.py -q` → 新用例失败（ImportError：harness.state / harness.tools.todo 不存在）
+  - GREEN:
+    - 新建 `src/harness/state.py`（CURRENT_SESSION_ID ContextVar + RuntimeState 键控锁，design.md §2，≤ 60 行）；新建 `src/harness/tools/todo.py`（WriteTodosTool，design.md §3，≤ 130 行）；`tools/__init__.py` 导出
+    - `uv run pytest tests/tools/test_builtin_tools.py -q`（全部转绿）
+  - ASSERT:
+    - `wc -l`：state.py ≤ 60、todo.py ≤ 130
+    - `grep -n "print\|open(" src/harness/state.py src/harness/tools/todo.py` 零命中
+    - 所有函数含类型注解与中文 docstring；校验失败均抛 ToolExecutionError
+  - DoD:
+    - 会话隔离 + 并发写隔离由 testSessionIsolatedState / testConcurrentSessionsIsolated 固化；旧机制零复活
+  - 最小验证: `uv run pytest tests/tools/test_builtin_tools.py -q`
+  - commit: `feat: 新增 RuntimeState 会话隔离公共状态与 write_todos 工具`
+
+- [x] Task 2: loop 绑定会话上下文 + 接线注册与提示词，同步测试与文档
+  - complexity: 🟡
+  - files: Modify `src/harness/loop.py`、`src/harness/__main__.py`、`src/harness/prompts.py`、`tests/test_loop.py`、`tests/test_cli.py`、`README.md`、`CODEGRAPH.md`、`AGENTS.md`
+  - RED:
+    - `tests/test_loop.py` 新增 testSessionContextBoundDuringToolExecution（捕获工具断言绑定与复位）与 testConcurrentRunsIsolated（双线程并发 run，两会话 todos 各归各）
+    - `tests/test_cli.py#testRegistryIncludesReadMemory` 改为双参 `_build_registry(memory, state)` 并断言 `"write_todos" in names`
+    - `uv run pytest tests/test_loop.py tests/test_cli.py -q` → 3 项失败（loop 未绑定 / 签名单参 / 无 write_todos）
+  - GREEN:
+    - `loop.py#run` 入口 `CURRENT_SESSION_ID.set(session_id)`、finally 复位（design.md §4）
+    - `__main__.py`：`state = RuntimeState()`；`_build_registry(memory, state)` 注册 5 工具（design.md §5）
+    - `prompts.py`：SYSTEM_PROMPT 追加第 4 条
+    - `uv run pytest tests/test_loop.py tests/test_cli.py -q`（全部转绿）
+  - ASSERT:
+    - `uv run pytest` 全绿（180 项）
+    - `PYTHONPATH=src uv run python -c "from unittest.mock import MagicMock; from harness.__main__ import _build_registry; from harness.state import RuntimeState; r=_build_registry(MagicMock(), RuntimeState()); assert sorted(r.names()) == ['calculator','read_memory','search','weather','write_todos']"`
+    - `grep -rn "RebindableTodoTool\|on_session_change\|session_ref" src/ tests/` 零命中
+    - README 工具清单含 write_todos；CODEGRAPH.md 模块表补 state.py / todo.py；AGENTS.md 目录树补 state.py 行
+    - `codegraph sync` 成功
+  - DoD:
+    - 一次 run 即一个执行单元：工具经上下文读到本会话 id；双线程同时 run 隔离由测试固化；5 工具注册；文档三处同步
+  - 最小验证: `uv run pytest tests/test_loop.py tests/test_cli.py -q && uv run pytest`
+  - commit: `feat: loop 绑定会话上下文并接线 write_todos，支持多会话同时执行`
