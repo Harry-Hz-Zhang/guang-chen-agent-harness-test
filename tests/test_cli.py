@@ -14,16 +14,18 @@ from harness.loop import LoopResult
 class TestRegistryAssembly:
 
     def testRegistryIncludesReadMemory(self, tmp_path: Path) -> None:
-        """_build_registry 注册 read_memory（绑定全局记忆存储）及 calculator / search / weather。"""
+        """_build_registry 注册五个内置工具（read_memory 绑定记忆、write_todos 绑定公共状态）。"""
         from harness.__main__ import _build_registry
         from harness.memory.store import MemoryStore
+        from harness.state import RuntimeState
 
-        registry = _build_registry(MemoryStore(tmp_path))
+        registry = _build_registry(MemoryStore(tmp_path), RuntimeState())
         names = registry.names()
         assert "read_memory" in names
         assert "calculator" in names
         assert "search" in names
         assert "weather" in names
+        assert "write_todos" in names
         assert registry.get("read_memory").name == "read_memory"
 
 

@@ -63,6 +63,7 @@ src/harness/            核心 runtime
     store.py            长期记忆
     summarizer.py       闲置总结
   renderer.py           流式终端渲染器（思考/正文分通道状态机）
+  state.py              进程级公共内存状态（会话隔离 + 并发绑定）
   trace.py              工具调用 trace 与日志
 tests/                  pytest 测试（与 src 镜像）
 openspec/               VSDD/OpenSpec artifacts（方案真源）

@@ -24,10 +24,12 @@ from harness.memory.store import MemoryStore
 from harness.memory.summarizer import MemorySummarizer
 from harness.middleware import Middleware
 from harness.session.store import SessionStore
+from harness.state import RuntimeState
 from harness.tools.calculator import CalculatorTool
 from harness.tools.read_memory import ReadMemoryTool
 from harness.tools.registry import ToolRegistry
 from harness.tools.search import SearchTool
+from harness.tools.todo import WriteTodosTool
 from harness.tools.weather import WeatherTool
 from harness.trace import JsonlExporter, TraceCollector
 
@@ -174,13 +176,14 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _build_registry(memory: MemoryStore) -> ToolRegistry:
-    """注册四个内置工具（calculator / search / weather / read_memory，read_memory 绑定全局记忆）。"""
+def _build_registry(memory: MemoryStore, state: RuntimeState) -> ToolRegistry:
+    """注册五个内置工具（read_memory 绑定全局记忆、write_todos 绑定会话隔离的公共状态）。"""
     registry = ToolRegistry()
     registry.register(CalculatorTool())
     registry.register(SearchTool())
     registry.register(WeatherTool())
     registry.register(ReadMemoryTool(memory))
+    registry.register(WriteTodosTool(state))
     return registry
 
 
@@ -214,7 +217,8 @@ def main(
     sessions = SessionStore(config.data_dir)
     memory = MemoryStore(config.data_dir)
     builder = ContextBuilder(sessions, memory, config)
-    registry = _build_registry(memory)
+    state = RuntimeState()
+    registry = _build_registry(memory, state)
     trace = TraceCollector(JsonlExporter(config.data_dir / "traces"))
     compressor = ContextCompressor(sessions, llm, trace, config)
     middlewares: list[Middleware] = [CompactionMiddleware(compressor)]

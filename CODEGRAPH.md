@@ -153,6 +153,8 @@ sequenceDiagram
 | [`src/harness/tools/search.py`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/tools/search.py) | [`SearchTool`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/tools/search.py#L12) | 模拟联网搜索工具。基于关键词提供模拟检索结果。 |
 | [`src/harness/tools/weather.py`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/tools/weather.py) | [`WeatherTool`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/tools/weather.py#L12) | 模拟天气查询工具。按城市返回天气与温度信息。 |
 | [`src/harness/tools/read_memory.py`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/tools/read_memory.py) | [`ReadMemoryTool`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/tools/read_memory.py#L12) | 全局长期记忆读取工具。按文件名读取记忆详细内容并返回。 |
+| [`src/harness/tools/todo.py`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/tools/todo.py) | [`WriteTodosTool`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/tools/todo.py#L16) | 待办写入工具。全量替换当前会话的待办清单（status 三态），经 `CURRENT_SESSION_ID` 上下文绑定实现会话隔离与多 agent 并发共享。 |
+| [`src/harness/state.py`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/state.py) | [`RuntimeState`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/state.py#L24)<br/>[`CURRENT_SESSION_ID`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/state.py#L17) | 进程级公共内存状态（按会话键控、线程安全、不落盘）与执行上下文会话绑定（ContextVar，协程/线程天然隔离）。 |
 
 ---
 

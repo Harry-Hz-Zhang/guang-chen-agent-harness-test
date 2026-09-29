@@ -24,7 +24,7 @@ REPL 命令：`/new` 新会话、`/switch <id>` 切换、`/sessions` 列出全�
 | 模块 | 职责 |
 | --- | --- |
 | `loop.py` | ReAct 主循环与决策轮上限 |
-| `tools/` | 工具注册表，LLM 按参数 Schema 自主调用（calculator / search / weather / read_memory） |
+| `tools/` | 工具注册表，LLM 按参数 Schema 自主调用（calculator / search / weather / read_memory / write_todos） |
 | `session/` | 会话隔离与持久化，每会话一个 JSONL 文件，只追加 |
 | `context/` | 上下文组装；未压缩窗口超 60 轮或估算 10 万 token 时压缩为摘要，保留最近 5 轮 |
 | `memory/` | 全局长期记忆，见下节 |
