@@ -4,8 +4,9 @@ import os
 from pathlib import Path
 
 import pytest
+from dotenv import load_dotenv
 
-from harness.config import RuntimeConfig, load_dotenv
+from harness.config import RuntimeConfig
 
 _CLEAN_ENV_TARGET_PREFIX = "HARNESS_"
 
@@ -103,7 +104,7 @@ class TestRuntimeConfig:
 
 
 class TestLoadDotenv:
-    """覆盖 load_dotenv 的解析与环境变量加载逻辑。"""
+    """覆盖 python-dotenv 加载 .env 的行为契约（第三方库，标准语义）。"""
 
     def testLoadDotenvFileNotFound(self, tmp_path: Path) -> None:
         """文件不存在时返回 False 且不抛异常。"""
@@ -146,24 +147,31 @@ class TestLoadDotenv:
     def testLoadDotenvOverrideBehavior(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """默认 override=True 时覆盖既有环境变量；override=False 时保留既有环境变量。"""
+        """默认 override=False 保留既有环境变量；显式 override=True 时覆盖。"""
         env_file = tmp_path / ".env"
         env_file.write_text("TEST_KEY=from_file\n", encoding="utf-8")
         monkeypatch.setenv("TEST_KEY", "from_sys")
-        assert load_dotenv(env_file, override=False) is True
+        assert load_dotenv(env_file) is True
         assert os.environ.get("TEST_KEY") == "from_sys"
 
-        assert load_dotenv(env_file) is True
+        assert load_dotenv(env_file, override=True) is True
         assert os.environ.get("TEST_KEY") == "from_file"
 
-    def testLoadDotenvEmptyValueSkipped(
+    def testLoadDotenvEmptyValueBehavior(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """空值行（如 KEY=）自动跳过，不覆盖或置空既有环境变量。"""
+        """空值行（如 KEY=）遵循库默认语义：注入空字符串而非跳过。
+
+        override=False（默认）时不覆盖既有环境变量；override=True 时
+        即使值为空也覆盖为空字符串。
+        """
         env_file = tmp_path / ".env"
         env_file.write_text("EMPTY_KEY=\n", encoding="utf-8")
         monkeypatch.setenv("EMPTY_KEY", "keep_me")
         assert load_dotenv(env_file) is True
         assert os.environ.get("EMPTY_KEY") == "keep_me"
+
+        assert load_dotenv(env_file, override=True) is True
+        assert os.environ.get("EMPTY_KEY") == ""
 
 

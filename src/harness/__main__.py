@@ -17,7 +17,9 @@ import secrets
 import sys
 from typing import Any, Callable, Iterable
 
-from harness.config import RuntimeConfig, load_dotenv
+from dotenv import load_dotenv
+
+from harness.config import RuntimeConfig
 from harness.context.builder import ContextBuilder
 from harness.context.compressor import CompactionMiddleware, ContextCompressor
 from harness.llm import LLMClient, LLMError, StreamEvent
