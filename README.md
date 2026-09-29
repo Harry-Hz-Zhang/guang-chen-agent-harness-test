@@ -14,12 +14,14 @@
 # 1. 安装依赖（创建 .venv 并安装 openai / pytest）
 uv sync
 
-# 2. 配置密钥（环境变量，绝不写入代码）
-#    PowerShell 临时生效：
-$env:DEEPSEEK_API_KEY = "sk-xxx"
-#    模型名 / base_url 可选覆盖：
-$env:LLM_MODEL = "deepseek-flash"
-$env:LLM_BASE_URL = "https://api.deepseek.com"
+# 2. 配置密钥（项目启动时会自动加载根目录 .env）
+#    方式 A（推荐）：复制模板并填入你的 Key
+#    cp .env.example .env
+#    （在 .env 中填入 DEEPSEEK_API_KEY=sk-xxx）
+#
+#    方式 B：通过环境变量指定（macOS / zsh）：
+export DEEPSEEK_API_KEY="sk-xxx"
+#    （PowerShell 临时生效）：$env:DEEPSEEK_API_KEY = "sk-xxx"
 
 # 3. 启动 REPL（src 布局需 PYTHONPATH；PowerShell 先执行 $env:PYTHONPATH = "src"）
 PYTHONPATH=src uv run python -m harness
@@ -120,6 +122,7 @@ src/harness/
 | 5 | openai SDK 类型层无 `reasoning_content` | `getattr` 运行时透传，封装收敛在 `llm.py` 单点（pydantic extra=allow） | `tests/test_llm.py` / `tests/test_stream.py` |
 | 6 | 后台总结线程与主线程并发写 trace 文件 | `JsonlExporter` 写盘段 `threading.Lock` 互斥 | `tests/test_trace.py` |
 | 7 | 会话隔离记忆无法跨会话共享且合并脆弱 | 重构为全局 MEMORY 追加归档 + MEMORY.md 索引注入 + `read_memory` 工具按需读取 | `openspec/changes/refactor-global-memory/` |
+| 8 | 启动时需手动 export 环境变量容易遗漏 | 增加零第三方依赖的轻量 `load_dotenv` 支持，优先自动加载项目根目录 `.env` | `src/harness/config.py` 与 `tests/test_config.py` |
 
 ### 手工验收清单（真实 API，由人工执行后填写结果）
 

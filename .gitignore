@@ -5,6 +5,7 @@ venv/
 # IDE
 .idea/
 .vscode/
+.trae/
 *.iml
 
 # Python
@@ -18,6 +19,7 @@ __pycache__/
 # 环境变量与密钥（绝不可提交）
 .env
 .env.*
+!.env.example
 *.key
 
 # 运行期产物
