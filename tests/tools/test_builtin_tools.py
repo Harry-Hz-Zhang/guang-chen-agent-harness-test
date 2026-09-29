@@ -252,6 +252,27 @@ class TestWriteTodos:
         with _session_context("s1"), pytest.raises(ToolExecutionError, match="数组"):
             tool.execute(todos="不是数组")
 
+    def testNonDictItemRejected(self) -> None:
+        """列表含非对象项抛 ToolExecutionError（match 项）。"""
+        state = RuntimeState()
+        tool = self._make_tool(state)
+        with _session_context("s1"), pytest.raises(ToolExecutionError, match="项"):
+            tool.execute(todos=[self._todo("任务甲"), "不是对象"])
+
+    def testTooManyTodosRejected(self) -> None:
+        """超过 100 条上限抛 ToolExecutionError（match 上限）。"""
+        state = RuntimeState()
+        tool = self._make_tool(state)
+        with _session_context("s1"), pytest.raises(ToolExecutionError, match="上限"):
+            tool.execute(todos=[self._todo(f"任务{i}") for i in range(101)])
+
+    def testOverlongContentRejected(self) -> None:
+        """单条 content 超 1000 字符抛 ToolExecutionError（match 超长）。"""
+        state = RuntimeState()
+        tool = self._make_tool(state)
+        with _session_context("s1"), pytest.raises(ToolExecutionError, match="超长"):
+            tool.execute(todos=[self._todo("长" * 1001)])
+
     def testEmptyListClears(self) -> None:
         """写入空列表清空当前会话待办，返回含「清空」。"""
         state = RuntimeState()

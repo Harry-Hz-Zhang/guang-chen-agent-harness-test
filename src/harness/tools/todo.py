@@ -13,6 +13,7 @@ _STATUS_LABELS: dict[str, str] = {
     "completed": "已完成",
 }
 _MAX_TODOS: int = 100
+_MAX_CONTENT_CHARS: int = 1000
 
 
 class WriteTodosTool(BaseTool):
@@ -88,6 +89,11 @@ class WriteTodosTool(BaseTool):
             if not isinstance(content, str) or not content.strip():
                 raise ToolExecutionError(
                     f"第 {index} 项 content 必须为非空字符串", tool=self.name
+                )
+            if len(content) > _MAX_CONTENT_CHARS:
+                raise ToolExecutionError(
+                    f"第 {index} 项 content 超长（最多 {_MAX_CONTENT_CHARS} 字符）",
+                    tool=self.name,
                 )
             status = item.get("status")
             if status not in _STATUS_LABELS:

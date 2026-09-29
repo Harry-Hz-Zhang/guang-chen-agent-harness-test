@@ -36,6 +36,6 @@ class RuntimeState:
             self.todos_by_session[session_id] = todos
 
     def todos(self, session_id: str) -> list[dict]:
-        """读取指定会话的待办列表副本（线程安全；无记录时为空列表）。"""
+        """读取指定会话的待办列表副本（逐项深一层拷贝，线程安全；无记录时为空列表）。"""
         with self._lock:
-            return list(self.todos_by_session.get(session_id, []))
+            return [dict(item) for item in self.todos_by_session.get(session_id, [])]
