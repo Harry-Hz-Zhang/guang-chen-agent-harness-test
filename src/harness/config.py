@@ -22,6 +22,7 @@ _HARNESS_ENV_NUMERIC_FIELDS: tuple[tuple[str, type], ...] = (
     ("llm_timeout_seconds", float),
     ("llm_max_retries", int),
     ("tool_result_max_chars", int),
+    ("max_concurrent_sessions", int),
 )
 
 
@@ -34,8 +35,9 @@ class RuntimeConfig:
     决策轮上限；compact_rounds / compact_tokens / keep_recent_rounds
     为超长压缩触发与保留参数；idle_seconds / scan_interval_seconds
     为闲置会话总结参数；llm_* 为 LLM 调用超时与重试参数；
-    tool_result_max_chars 为工具结果进上下文的截断长度；data_dir
-    为运行期产物（会话/记忆/trace）根目录。
+    tool_result_max_chars 为工具结果进上下文的截断长度；
+    max_concurrent_sessions 为并发批次（ConcurrentRunner）的线程池
+    上限；data_dir 为运行期产物（会话/记忆/trace）根目录。
     """
 
     model: str = DEFAULT_MODEL
@@ -51,6 +53,7 @@ class RuntimeConfig:
     llm_timeout_seconds: float = 60.0
     llm_max_retries: int = 2
     tool_result_max_chars: int = 2000
+    max_concurrent_sessions: int = 4
     data_dir: Path = Path("data")
 
     @classmethod
