@@ -42,7 +42,6 @@ class TestRuntimeConfig:
         assert config.scan_interval_seconds == 300
         assert config.llm_timeout_seconds == 60.0
         assert config.llm_max_retries == 2
-        assert config.tool_timeout_seconds == 30.0
         assert config.tool_result_max_chars == 2000
         assert config.data_dir == Path("data")
 
@@ -74,7 +73,6 @@ class TestRuntimeConfig:
         assert config.scan_interval_seconds == 300
         assert config.llm_timeout_seconds == 60.0
         assert config.llm_max_retries == 2
-        assert config.tool_timeout_seconds == 30.0
         assert config.tool_result_max_chars == 2000
 
     def testInvalidEnvFallsBack(
@@ -101,5 +99,6 @@ class TestRuntimeConfig:
         assert config.scan_interval_seconds == 300
         assert config.llm_timeout_seconds == 60.0
         assert config.llm_max_retries == 2
-        assert config.tool_timeout_seconds == 30.0
         assert config.tool_result_max_chars == 2000
+
+

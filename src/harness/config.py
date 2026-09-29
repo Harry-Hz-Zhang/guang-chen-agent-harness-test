@@ -21,7 +21,6 @@ _HARNESS_ENV_NUMERIC_FIELDS: tuple[tuple[str, type], ...] = (
     ("scan_interval_seconds", int),
     ("llm_timeout_seconds", float),
     ("llm_max_retries", int),
-    ("tool_timeout_seconds", float),
     ("tool_result_max_chars", int),
 )
 
@@ -34,7 +33,7 @@ class RuntimeConfig:
     stream_enabled 控制思考模式与流式输出；max_rounds 为单次请求
     决策轮上限；compact_rounds / compact_tokens / keep_recent_rounds
     为超长压缩触发与保留参数；idle_seconds / scan_interval_seconds
-    为闲置会话总结参数；llm_* 与 tool_* 为超时与重试参数；
+    为闲置会话总结参数；llm_* 为 LLM 调用超时与重试参数；
     tool_result_max_chars 为工具结果进上下文的截断长度；data_dir
     为运行期产物（会话/记忆/trace）根目录。
     """
@@ -51,7 +50,6 @@ class RuntimeConfig:
     scan_interval_seconds: int = 300
     llm_timeout_seconds: float = 60.0
     llm_max_retries: int = 2
-    tool_timeout_seconds: float = 30.0
     tool_result_max_chars: int = 2000
     data_dir: Path = Path("data")
 
@@ -84,3 +82,4 @@ class RuntimeConfig:
                     parser.__name__,
                 )
         return cls(**overrides)
+
