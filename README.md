@@ -35,7 +35,7 @@ uv run pytest
 
 REPL 内置命令（不进入 LLM）：`/exit` 退出、`/new` 切换新会话、`/sessions` 列出全部会话、`/history` 当前会话概览。
 
-运行期产物全部落在 `data/`（已 gitignore）：`sessions/<id>.jsonl`（会话）、`memory/<id>/`（长期记忆）、`traces/<id>.jsonl`（调用追踪）。
+运行期产物全部落在 `data/`（已 gitignore，不入版本库）：`sessions/<id>.jsonl`（会话）、`MEMORY/`（全局长期记忆：`MEMORY.md` 索引、单条记忆文件与 `state.json` 进度）、`traces/<id>.jsonl`（调用追踪）。
 
 ## 二、系统设计（模块图）
 
@@ -68,9 +68,9 @@ src/harness/
 ├── middleware.py      # Middleware 基类（before_model/after_model/wrap_tool_call）
 ├── trace.py           # TraceCollector + JsonlExporter（OTel GenAI 命名对齐）
 ├── tools/             # BaseTool/ToolRegistry + calculator(ast 白名单)/search/weather/read_memory
-├── session/store.py   # SessionStore（JSONL append-only，一會话一文件）
+├── session/store.py   # SessionStore（JSONL append-only，一会话一文件）
 ├── context/           # ContextBuilder + estimate_tokens；ContextCompressor + CompactionMiddleware
-└── memory/            # MemoryStore（SHA-256 去重 + LLM 四动作合并）；MemorySummarizer（闲置总结）
+└── memory/            # MemoryStore（全局 MEMORY 目录、时间戳 md 归档与 MEMORY.md 索引）；MemorySummarizer（闲置会话增量提取）
 ```
 
 关键决策（完整版见 `openspec/changes/build-minimal-agent-runtime/design.md`）：
@@ -82,7 +82,7 @@ src/harness/
 
 ## 三、memory 的召回时机与放置方式
 
-**召回时机**：组装上下文时（每次 LLM 调用前）。`ContextBuilder.build` 每轮请求都会调用 `MemoryStore.render_summary(session_id)`——该会话记忆目录存在则渲染记忆摘要，注入到 system 消息尾部；目录不存在则 system 提示词保持原文。同一次运行的会话内多轮请求共享同一份存储（每次实时读取，新增记忆下轮即生效）。
+**召回时机**：组装上下文时（每次 LLM 调用前）。`ContextBuilder.build` 每轮请求都会调用 `MemoryStore.render_index()`——若全局记忆索引存在，则将索引内容及 `read_memory` 工具使用说明注入到 system 消息尾部；若尚无记忆则 system 提示词保持原文。所有会话共享同一份全局记忆，新增记忆在所有会话的后续轮次中立即全局生效。
 
 **放置方式**：system 消息内追加独立段落，形如：
 
@@ -90,16 +90,20 @@ src/harness/
 <SYSTEM_PROMPT 原文>
 
 ## 历史记忆
-- 用户偏好中文回复
-- 用户的猫叫小花
+- 20260928-150000.md｜用户偏好中文回复（tags: 偏好, 语言）
+- 20260928-150100.md｜用户的小猫名叫花花（tags: 宠物）
+（如需某条记忆的完整内容，用 read_memory 工具按文件名读取）
 ```
 
-**记忆的产生与去重**：
+**记忆的产生与提取**：
 
-- 写入：闲置会话后台总结（`MemorySummarizer` daemon 线程每 5 分钟扫描，会话 2 小时无更新且尚未总结过 → LLM 总结写入）。
-- 去重：写入前对规范化（strip）内容计算 SHA-256，同哈希条目已存在则跳过——重复内容不新增文件。
-- 合并：`MemoryStore.merge`（低频手动路径）以 LLM 输出的 ADD/UPDATE/DELETE/NOOP 四动作整理条目后重写 `MEMORY.md` 索引；输出非法时保留原状。
-- 记忆按会话隔离：`data/memory/<session_id>/MEMORY.md`（索引）+ `entries/<sha256 前 12 位>.md`（单条，frontmatter 含完整哈希/创建时间/标签）。
+- **产生时机**：后台闲置会话扫描（`MemorySummarizer` daemon 线程周期扫描，默认 5 分钟扫描一次，会话闲置达阈值且有未提取新消息时触发）。
+- **增量提取**：按各会话在 `state.json` 中的提取进度（消息 `ordinal`），仅将新产生的消息提交给 LLM，按结构化 JSON 提取核心记忆条目与标签（如用户偏好、重要事实），提取后推进进度，无新消息时不重复调用。
+- **存储结构**：
+  - `data/MEMORY/MEMORY.md`：全局索引文件（只追加，每行包含：记忆文件名｜首条简述/条数｜tags）。
+  - `data/MEMORY/<YYYYMMDD-HHMMSS>.md`：单条记忆归档文件（正文记录归档日期与具体记忆条目）。
+  - `data/MEMORY/state.json`：记录每个会话已提取到的最大消息 ordinal 进度。
+- **按需详情召回**：通过内置 `read_memory` 工具，LLM 可在需要时根据索引中的文件名主动读取特定记忆的全文内容。
 
 ## 四、AI Prompt 与问题解决记录
 
@@ -115,6 +119,7 @@ src/harness/
 | 4 | ReAct 循环中当前输入每轮出现两次 | Reverse Sync 修订数据流：首轮 build 后落库 user 消息，后续轮传空串 | log.md「Task 9 审查后 Reverse Sync ×5」 |
 | 5 | openai SDK 类型层无 `reasoning_content` | `getattr` 运行时透传，封装收敛在 `llm.py` 单点（pydantic extra=allow） | `tests/test_llm.py` / `tests/test_stream.py` |
 | 6 | 后台总结线程与主线程并发写 trace 文件 | `JsonlExporter` 写盘段 `threading.Lock` 互斥 | `tests/test_trace.py` |
+| 7 | 会话隔离记忆无法跨会话共享且合并脆弱 | 重构为全局 MEMORY 追加归档 + MEMORY.md 索引注入 + `read_memory` 工具按需读取 | `openspec/changes/refactor-global-memory/` |
 
 ### 手工验收清单（真实 API，由人工执行后填写结果）
 
@@ -128,5 +133,5 @@ src/harness/
 | 4 | 压缩 | `$env:HARNESS_COMPACT_ROUNDS = "5"` 后进行 6+ 轮对话；检查 `data/sessions/<id>.jsonl` 出现 `kind:"compaction"` 记录；压缩后追问早期事实仍答对 | 待验收 |
 | 5 | 最大轮次 | `$env:HARNESS_MAX_ROUNDS = "2"` 后构造持续工具调用场景，第 3 轮前返回「已达最大轮次」并正常退出 | 待验收 |
 | 6 | trace 抽查 | `data/traces/<id>.jsonl` 逐行可 `json.loads`，含 `type:"llm"`/`type:"tool"` 事件与 `gen_ai.*` 字段 | 待验收 |
-| 7 | 记忆 | `$env:HARNESS_IDLE_SECONDS = "3"` + `$env:HARNESS_SCAN_INTERVAL_SECONDS = "5"`，对话后闲置 3 秒等待扫描；检查 `data/memory/<id>/MEMORY.md` 生成 | 待验收 |
+| 7 | 记忆 | `$env:HARNESS_IDLE_SECONDS = "3"` + `$env:HARNESS_SCAN_INTERVAL_SECONDS = "5"`，对话后闲置 3 秒等待扫描；检查 `data/MEMORY/` 生成索引与记忆文件，并在跨会话中由 `read_memory` 读取 | 待验收 |
 | 8 | 工具错误回传 | 对话中诱导工具报错（如让 calculator 算 1/0），观察 LLM 收到结构化错误后向用户说明 | 待验收 |
