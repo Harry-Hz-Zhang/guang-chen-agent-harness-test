@@ -12,7 +12,6 @@ from harness.context.builder import (
     ContextBuilder,
     estimate_tokens,
 )
-from harness.llm import ToolCall
 from harness.middleware import LoopState, Middleware
 from harness.prompts import SYSTEM_PROMPT
 
@@ -186,11 +185,6 @@ class TestMiddleware:
         middleware = Middleware()
         middleware.before_model(state)
         middleware.after_model(state)
-        call = ToolCall(id="call_1", name="calc", arguments_raw="{}", args={})
-        result = middleware.wrap_tool_call(
-            call, lambda c: f"执行结果:{c.name}"
-        )
-        assert result == "执行结果:calc"
         assert state.session_id == snapshot["session_id"]
         assert state.round_no == snapshot["round_no"]
         assert state.messages == snapshot["messages"]

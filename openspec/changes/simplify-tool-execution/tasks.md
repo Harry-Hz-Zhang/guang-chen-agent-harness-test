@@ -1,0 +1,49 @@
+# Tasks — 工具执行路径简化（删超时线程池 + wrap_tool_call）
+
+- [x] Task 1: 删除工具执行超时链与 wrap_tool_call 钩子，工具改为直接执行
+  - complexity: 🟢
+  - files: Modify `src/harness/loop.py`、`src/harness/middleware.py`、`src/harness/config.py`、`tests/test_loop.py`、`tests/test_config.py`、`tests/context/test_builder.py`
+  - RED:
+    - 删除 `TestReactLoop#testToolTimeoutStructuredReturn`（超时路径随线程池执行一起删除，被测行为消失）与 `_SlowTool` 类、`import time`（超时专用设施，无其他消费者）
+    - `TestReactLoop#testMiddlewareHooksInvoked` 删除 L361 / L380 两处 `wrap_tool_call_count` 断言，docstring 改为「无工具轮 before/after 各 1；带工具 2 轮 before 2、after 1」（钩子调用次数规格随钩子删除同步收敛）
+    - `TestMiddleware#testDefaultNoOp` 删除 L189-193 的 `ToolCall` 构造与 `wrap_tool_call` 调用段（保留 before/after 两钩子的空实现断言），`tests/context/test_builder.py` 删除 `ToolCall` 导入
+    - `TestRuntimeConfig#testDefaultValues` / `#testHarnessEnvOverride` / `#testThinkingAndStreamFlags` 删除 `tool_timeout_seconds == 30.0` 断言（默认值规格随字段删除同步收敛）
+    - `tests/test_loop.py` `RecordingMiddleware` 删除 `wrap_tool_call_count` 字段与 `wrap_tool_call` 方法，`from typing import Any, Callable` 改为 `Any`（Callable 仅剩 wrap 签名使用）
+    - 接口断言（对现实现必失败，作为删除目标的可执行规格）：`PYTHONPATH=src uv run python -c "from harness.config import RuntimeConfig; assert not hasattr(RuntimeConfig, 'tool_timeout_seconds') or hasattr(RuntimeConfig, '__dataclass_fields__') and 'tool_timeout_seconds' not in RuntimeConfig.__dataclass_fields__"` → `assert 'tool_timeout_seconds' not in RuntimeConfig.__dataclass_fields__` 断言失败（现实现字段存在）
+    - 接口断言：`PYTHONPATH=src uv run python -c "from harness.middleware import Middleware; assert not hasattr(Middleware, 'wrap_tool_call')"` → AssertionError（现实现钩子存在）
+    - 接口断言：`PYTHONPATH=src uv run python -c "from harness.loop import ReactLoop; assert not hasattr(ReactLoop, '_execute_with_timeout') and not hasattr(ReactLoop, '_execute_through_middlewares')"` → AssertionError（现实现两方法存在）
+  - GREEN:
+    - `src/harness/loop.py`：`_handle_tool_call` 执行段改为 `result = tool.execute(**(call.args or {}))`；删 `except TimeoutError` 专案分支（工具自身 TimeoutError 落通用分支转 `ToolExecutionError`）；删 `_execute_through_middlewares` / `_execute_with_timeout` 两方法；删 `import functools`、`from concurrent.futures import ThreadPoolExecutor`（`Callable` 保留，`run`/`_call_llm`/`_tee` 签名仍用）；模块 docstring「middleware.wrap_tool_call 执行（超时受控）」改「直接执行」，`_handle_tool_call` docstring 三类失败描述同步
+    - `src/harness/middleware.py`：删 `wrap_tool_call` 钩子与 `Callable` 导入；模块 docstring「三钩子」改「两钩子」，类 docstring 同步
+    - `src/harness/config.py`：`_HARNESS_ENV_NUMERIC_FIELDS` 删 `("tool_timeout_seconds", float)` 行；删 `tool_timeout_seconds: float = 30.0` 字段；类 docstring「llm_* 与 tool_* 为超时与重试参数」改「llm_* 为 LLM 调用超时与重试参数」（不触碰工作区在途的 `load_dotenv` 改动）
+    - `uv run pytest tests/test_loop.py tests/test_config.py tests/context/test_builder.py -q`（全部转绿）
+  - ASSERT:
+    - `uv run pytest` 全绿；总数 176 → 175（仅删 testToolTimeoutStructuredReturn；基线经 `grep -c "def test"` 逐文件核对，pytest addopts="-q" 无总结行）
+    - `grep -rn "wrap_tool_call\|_execute_with_timeout\|_execute_through_middlewares\|tool_timeout_seconds\|ToolTimeoutError\|ThreadPoolExecutor" src/ tests/` 零命中
+    - 三条接口断言（RuntimeConfig 字段 / Middleware 钩子 / ReactLoop 方法）全部通过
+    - 既有错误回传用例 `testToolExecutionErrorStructuredReturn` / `testUnknownToolStructuredReturn` / `testInvalidArgumentsNotExecuted` / `testTraceSpansEmitted` 零改动通过（D23 契约不变）
+    - 所有函数仍含类型注解（含返回值）与中文 docstring
+  - DoD:
+    - 工具执行路径为「查找 → 校验 → 直接执行 → 落库」单层结构
+    - middleware 仅剩 before_model / after_model 两钩子，CompactionMiddleware 装配与压缩行为零变化
+    - 全量测试全绿
+  - 最小验证: `uv run pytest tests/test_loop.py tests/test_config.py tests/context/test_builder.py -q`
+
+- [x] Task 2: 同步 README / CODEGRAPH / .env.example 文档并重建代码图谱
+  - complexity: 🟢
+  - files: Modify `README.md`、`CODEGRAPH.md`、`.env.example`、`openspec/changes/simplify-tool-execution/log.md`
+  - RED:
+    - `grep -n "wrap_tool_call\|30s 超时\|HARNESS_TOOL_TIMEOUT_SECONDS\|超时线程隔离" README.md CODEGRAPH.md .env.example` → 命中 5 处待清理：README.md L56 / L70，CODEGRAPH.md L125 / L128，.env.example L32（文档与已删除机制脱节，即待修复现状）
+  - GREEN:
+    - README.md L56 数据流 `ToolCallBatch → 逐个 validate → [middleware.wrap_tool_call] → 执行(30s 超时)` 改 `ToolCallBatch → 逐个 validate → 直接执行`
+    - README.md L70 `Middleware 基类（before_model/after_model/wrap_tool_call）` 改 `Middleware 基类（before_model/after_model）`
+    - CODEGRAPH.md L125 删「与超时线程隔离执行」；L128「定义 before_model、after_model 与 wrap_tool_call 扩展点，支撑压缩、安全拦截与限流」改「定义 before_model、after_model 扩展点，支撑超长压缩等会话级处理」
+    - `.env.example` 删 `# HARNESS_TOOL_TIMEOUT_SECONDS=30.0` 行
+    - 写 `log.md` 记录 apply 过程与测试结果
+  - ASSERT:
+    - `grep -rn "wrap_tool_call\|HARNESS_TOOL_TIMEOUT\|tool_timeout" README.md CODEGRAPH.md .env.example` 零命中
+    - `uv run pytest` 仍全绿（175 项）
+    - `codegraph sync` 执行成功；`codegraph impact wrap_tool_call` 报告无受影响符号（钩子已消失）
+  - DoD:
+    - 文档与实现一致；图谱索引与工作区代码同步
+  - 最小验证: `codegraph sync && uv run pytest -q`

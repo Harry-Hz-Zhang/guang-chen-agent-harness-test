@@ -51,7 +51,7 @@ REPL 内置命令（不进入 LLM）：`/exit` 退出、`/new` 切换新会话�
   → TraceCollector.end_llm_span(usage)
   → parse_response() → AgentDecision
       ├─ FinalAnswer → [middleware.after_model] → 返回
-      └─ ToolCallBatch → 逐个 validate → [middleware.wrap_tool_call] → 执行(30s 超时)
+      └─ ToolCallBatch → 逐个 validate → 直接执行
             ├─ 成功 → tool 消息（组装时截 2000 字符）
             └─ 失败 → tool 消息（结构化错误 JSON 回传 LLM）
           → SessionStore.append + tool span → 回到 before_model（上限 15 轮）
@@ -65,7 +65,7 @@ src/harness/
 ├── llm.py             # LLMClient（invoke/stream 双入口）+ AIMessage/ToolCall/StreamEvent
 ├── parser.py          # parse_response（答案/工具调用二分）+ validate_arguments
 ├── loop.py            # ReactLoop（主循环 + middleware 编排 + 决策轮上限）
-├── middleware.py      # Middleware 基类（before_model/after_model/wrap_tool_call）
+├── middleware.py      # Middleware 基类（before_model/after_model）
 ├── trace.py           # TraceCollector + JsonlExporter（OTel GenAI 命名对齐）
 ├── tools/             # BaseTool/ToolRegistry + calculator(ast 白名单)/search/weather/read_memory
 ├── session/store.py   # SessionStore（JSONL append-only，一会话一文件）
