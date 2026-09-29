@@ -15,7 +15,7 @@ import secrets
 import sys
 from typing import Any, Callable, Iterable
 
-from harness.config import RuntimeConfig
+from harness.config import RuntimeConfig, load_dotenv
 from harness.context.builder import ContextBuilder
 from harness.context.compressor import CompactionMiddleware, ContextCompressor
 from harness.llm import LLMClient, LLMError, StreamEvent
@@ -194,6 +194,7 @@ def main(
     缺少 DEEPSEEK_API_KEY 时输出设置指引并返回 1（不发起任何 API
     调用）；正常路径返回 0。
     """
+    load_dotenv()
     args = _parse_args(argv)
     output: Writer = writer if writer is not None else _default_writer
     config = RuntimeConfig.from_env()

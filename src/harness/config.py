@@ -83,3 +83,51 @@ class RuntimeConfig:
                 )
         return cls(**overrides)
 
+
+def load_dotenv(
+    dotenv_path: str | Path | None = None,
+    override: bool = True,
+) -> bool:
+    """加载 .env 文件中的键值对并注入 os.environ。
+
+    支持忽略空行与以 # 开头的注释行；支持 export 前缀；支持单双引号包裹的值；
+    空值（如 KEY=）自动跳过，不污染环境；
+    默认 override=True，以当前项目 .env 文件中的显式设置为准；
+    如果文件不存在则安全返回 False，不抛出异常。
+    """
+    target = Path(".env") if dotenv_path is None else Path(dotenv_path)
+
+    if not target.is_file():
+        return False
+
+    try:
+        content = target.read_text(encoding="utf-8")
+    except OSError as exc:
+        logger.warning("读取 .env 文件失败：%s", exc)
+        return False
+
+    for line in content.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].strip()
+        if "=" not in line:
+            continue
+        key, raw_val = line.split("=", 1)
+        key = key.strip()
+        if not key:
+            continue
+        val = raw_val.strip()
+        if len(val) >= 2 and (
+            (val.startswith('"') and val.endswith('"'))
+            or (val.startswith("'") and val.endswith("'"))
+        ):
+            val = val[1:-1]
+        if not val:
+            continue
+        if override or key not in os.environ:
+            os.environ[key] = val
+
+    return True
+

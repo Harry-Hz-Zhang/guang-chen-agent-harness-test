@@ -208,6 +208,7 @@ class TestCli:
         from harness import __main__ as cli
 
         monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+        monkeypatch.setattr(cli, "load_dotenv", lambda *a, **k: False)
         loop = MagicMock()
         monkeypatch.setattr(cli, "ReactLoop", lambda *a, **k: loop)
         monkeypatch.setattr(cli, "MemorySummarizer", MagicMock())
@@ -216,6 +217,24 @@ class TestCli:
         assert code != 0
         assert "DEEPSEEK_API_KEY" in writer.text
         assert loop.run.call_count == 0
+
+    def testApiKeyLoadedFromDotenv(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """main 启动时通过 load_dotenv 自动加载密钥。"""
+        from harness import __main__ as cli
+
+        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+
+        def _mock_load() -> bool:
+            monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-mock-key")
+            return True
+
+        monkeypatch.setattr(cli, "load_dotenv", _mock_load)
+        loop = MagicMock()
+        monkeypatch.setattr(cli, "ReactLoop", lambda *a, **k: loop)
+        monkeypatch.setattr(cli, "MemorySummarizer", MagicMock())
+        writer = _Writer()
+        code = cli.main(["--session", "s1"], ["/exit"], writer)
+        assert code == 0
 
 
 class TestRender:

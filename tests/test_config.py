@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from harness.config import RuntimeConfig
+from harness.config import RuntimeConfig, load_dotenv
 
 _CLEAN_ENV_TARGET_PREFIX = "HARNESS_"
 
@@ -100,5 +100,70 @@ class TestRuntimeConfig:
         assert config.llm_timeout_seconds == 60.0
         assert config.llm_max_retries == 2
         assert config.tool_result_max_chars == 2000
+
+
+class TestLoadDotenv:
+    """覆盖 load_dotenv 的解析与环境变量加载逻辑。"""
+
+    def testLoadDotenvFileNotFound(self, tmp_path: Path) -> None:
+        """文件不存在时返回 False 且不抛异常。"""
+        not_exist = tmp_path / ".env.nonexistent"
+        assert load_dotenv(not_exist) is False
+
+    def testLoadDotenvBasic(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """基本键值对、注释与空行忽略。"""
+        env_file = tmp_path / ".env"
+        env_file.write_text(
+            "# 这是一个注释\n"
+            "\n"
+            "DEEPSEEK_API_KEY=sk-test-12345\n"
+            "HARNESS_MAX_ROUNDS=20\n",
+            encoding="utf-8",
+        )
+        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+        monkeypatch.delenv("HARNESS_MAX_ROUNDS", raising=False)
+        loaded = load_dotenv(env_file)
+        assert loaded is True
+        assert os.environ.get("DEEPSEEK_API_KEY") == "sk-test-12345"
+        assert os.environ.get("HARNESS_MAX_ROUNDS") == "20"
+
+    def testLoadDotenvQuotesAndExport(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """带单双引号包裹的值及 export 前缀。"""
+        env_file = tmp_path / ".env"
+        env_file.write_text(
+            'export LLM_MODEL="deepseek-chat"\n'
+            "LLM_BASE_URL='https://custom.api.com'\n",
+            encoding="utf-8",
+        )
+        monkeypatch.delenv("LLM_MODEL", raising=False)
+        monkeypatch.delenv("LLM_BASE_URL", raising=False)
+        assert load_dotenv(env_file) is True
+        assert os.environ.get("LLM_MODEL") == "deepseek-chat"
+        assert os.environ.get("LLM_BASE_URL") == "https://custom.api.com"
+
+    def testLoadDotenvOverrideBehavior(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """默认 override=True 时覆盖既有环境变量；override=False 时保留既有环境变量。"""
+        env_file = tmp_path / ".env"
+        env_file.write_text("TEST_KEY=from_file\n", encoding="utf-8")
+        monkeypatch.setenv("TEST_KEY", "from_sys")
+        assert load_dotenv(env_file, override=False) is True
+        assert os.environ.get("TEST_KEY") == "from_sys"
+
+        assert load_dotenv(env_file) is True
+        assert os.environ.get("TEST_KEY") == "from_file"
+
+    def testLoadDotenvEmptyValueSkipped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """空值行（如 KEY=）自动跳过，不覆盖或置空既有环境变量。"""
+        env_file = tmp_path / ".env"
+        env_file.write_text("EMPTY_KEY=\n", encoding="utf-8")
+        monkeypatch.setenv("EMPTY_KEY", "keep_me")
+        assert load_dotenv(env_file) is True
+        assert os.environ.get("EMPTY_KEY") == "keep_me"
 
 
