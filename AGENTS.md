@@ -46,6 +46,7 @@ src/harness/            核心 runtime
   prompts.py            提示词模板集中放置
   loop.py               ReAct 主循环 + 单次请求决策轮上限
   middleware.py         中间件基类
+  runner.py             单进程多会话并发（线程池批量执行）
   llm.py                模型客户端封装
   parser.py             LLM 输出解析（思考 / 工具调用 / 最终答案）
   tools/

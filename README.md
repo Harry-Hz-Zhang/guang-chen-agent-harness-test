@@ -11,6 +11,7 @@ export DEEPSEEK_API_KEY=sk-xxx    # 或复制 .env.example 为 .env 填入
 
 PYTHONPATH=src uv run python -m harness                # 启动（新会话）
 PYTHONPATH=src uv run python -m harness --session s1   # 续接指定会话
+PYTHONPATH=src uv run python -m harness --concurrent s1:查天气 s2:写周报   # 单进程并发跑多个会话
 ```
 
 REPL 命令：`/new` 新会话、`/switch <id>` 切换、`/sessions` 列出全部、`/history` 概览、`/exit` 退出。
@@ -24,6 +25,7 @@ REPL 命令：`/new` 新会话、`/switch <id>` 切换、`/sessions` 列出全�
 | 模块 | 职责 |
 | --- | --- |
 | `loop.py` | ReAct 主循环与决策轮上限 |
+| `runner.py` | 单进程多会话并发：线程池批量执行多个会话的 ReAct 循环（一个 agent 一个线程，会话上下文经 ContextVar 隔离） |
 | `tools/` | 工具注册表，LLM 按参数 Schema 自主调用（calculator / search / weather / read_memory / write_todos） |
 | `session/` | 会话隔离与持久化，每会话一个 JSONL 文件，只追加 |
 | `context/` | 上下文组装；未压缩窗口超 60 轮或估算 10 万 token 时压缩为摘要，保留最近 5 轮 |
