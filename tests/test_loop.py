@@ -1,9 +1,8 @@
 """ReactLoop 的单元测试（全 FakeLLM，零网络，tmp 目录存储）。"""
 
 import json
-import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 from unittest.mock import MagicMock
 
 from harness.config import RuntimeConfig
@@ -65,7 +64,6 @@ class RecordingMiddleware(Middleware):
     def __init__(self) -> None:
         self.before_model_count: int = 0
         self.after_model_count: int = 0
-        self.wrap_tool_call_count: int = 0
         self.states: list[LoopState] = []
 
     def before_model(self, state: LoopState) -> None:
@@ -76,11 +74,6 @@ class RecordingMiddleware(Middleware):
     def after_model(self, state: LoopState) -> None:
         """计数 after_model。"""
         self.after_model_count += 1
-
-    def wrap_tool_call(self, call: ToolCall, execute: Callable[[ToolCall], str]) -> str:
-        """计数 wrap_tool_call 并透传执行。"""
-        self.wrap_tool_call_count += 1
-        return execute(call)
 
 
 class _BoomTool(BaseTool):
@@ -93,19 +86,6 @@ class _BoomTool(BaseTool):
     def execute(self, **kwargs: Any) -> str:
         """抛出 RuntimeError('boom')。"""
         raise RuntimeError("boom")
-
-
-class _SlowTool(BaseTool):
-    """执行耗时超过测试超时阈值的慢工具。"""
-
-    name = "slow"
-    description = "慢速测试工具"
-    parameters: dict[str, Any] = {"type": "object", "properties": {}, "required": []}
-
-    def execute(self, **kwargs: Any) -> str:
-        """睡 50ms 后返回。"""
-        time.sleep(0.05)
-        return "slow done"
 
 
 class _CountingTool(BaseTool):
@@ -152,7 +132,7 @@ def _make_loop(
     sessions = SessionStore(tmp_path)
     if memory is None:
         memory = MagicMock()
-        memory.render_summary.return_value = None
+        memory.render_index.return_value = None
     builder = ContextBuilder(sessions, memory, resolved_config)
     llm = FakeLLM(responses, stream_mode=fake_stream)
     resolved_registry = registry if registry is not None else ToolRegistry()
@@ -295,7 +275,7 @@ class TestReactLoop:
     def testToolErrorNoSideEffects(self, tmp_path: Path) -> None:
         """工具错误不写长期记忆、不派生额外记录、LoopResult 正常返回。"""
         memory = MagicMock()
-        memory.render_summary.return_value = None
+        memory.render_index.return_value = None
         registry = ToolRegistry()
         registry.register(_BoomTool())
         call = ToolCall(id="call_1", name="boom", arguments_raw="{}", args={})
@@ -309,26 +289,9 @@ class TestReactLoop:
         result = loop.run("再炸一次", "s1")
         assert result.answer == "恢复"
         assert result.truncated is False
-        assert memory.write.call_count == 0
+        assert memory.append.call_count == 0
         roles = [m.get("role") for m in _messages(sessions, "s1")]
         assert roles == ["user", "assistant", "tool", "assistant"]
-
-    def testToolTimeoutStructuredReturn(self, tmp_path: Path) -> None:
-        """工具超时：结构化 ToolTimeoutError 回传，主循环不中断。"""
-        config = RuntimeConfig(tool_timeout_seconds=0.01)
-        registry = ToolRegistry()
-        registry.register(_SlowTool())
-        call = ToolCall(id="call_1", name="slow", arguments_raw="{}", args={})
-        responses = [
-            AIMessage(content="", tool_calls=[call]),
-            AIMessage(content="超时也能继续"),
-        ]
-        loop, llm, _ = _make_loop(tmp_path, responses, registry=registry, config=config)
-        result = loop.run("调慢工具", "s1")
-        assert result.answer == "超时也能继续"
-        tool_messages = [m for m in llm.calls[1] if m.get("role") == "tool"]
-        payload = json.loads(tool_messages[0]["content"])
-        assert payload["error"]["type"] == "ToolTimeoutError"
 
     def testInvalidArgumentsNotExecuted(self, tmp_path: Path) -> None:
         """非法 JSON 参数：工具不执行，LLM 收到 InvalidToolArguments 错误。"""
@@ -350,7 +313,7 @@ class TestReactLoop:
         assert "JSON" in payload["error"]["message"]
 
     def testMiddlewareHooksInvoked(self, tmp_path: Path) -> None:
-        """钩子调用次数：无工具轮 before/after 各 1；带工具 2 轮 before 2、wrap 1。"""
+        """钩子调用次数：无工具轮 before/after 各 1；带工具 2 轮 before 2、after 1。"""
         recorder = RecordingMiddleware()
         loop, _, _ = _make_loop(
             tmp_path, [AIMessage(content="答")], middlewares=[recorder]
@@ -358,7 +321,6 @@ class TestReactLoop:
         loop.run("问", "s1")
         assert recorder.before_model_count == 1
         assert recorder.after_model_count == 1
-        assert recorder.wrap_tool_call_count == 0
 
         registry = ToolRegistry()
         registry.register(CalculatorTool())
@@ -377,7 +339,6 @@ class TestReactLoop:
         )
         loop2.run("算", "s1")
         assert recorder2.before_model_count == 2
-        assert recorder2.wrap_tool_call_count == 1
         assert recorder2.after_model_count == 1
 
     def testTraceSpansEmitted(self, tmp_path: Path) -> None:

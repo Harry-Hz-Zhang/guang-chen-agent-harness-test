@@ -24,12 +24,10 @@ class TestSessionStore:
         for i in range(3):
             store.append_message("s1", _msg("user" if i % 2 == 0 else "assistant", f"m{i}"))
         records = store.load_records("s1")
-        assert len(records) == 4
-        assert records[0]["kind"] == "session_meta"
-        assert records[0]["session_id"] == "s1"
-        assert [r["ordinal"] for r in records] == [0, 1, 2, 3]
+        assert len(records) == 3
+        assert [r["ordinal"] for r in records] == [0, 1, 2]
         lines = (tmp_path / "sessions" / "s1.jsonl").read_text(encoding="utf-8").splitlines()
-        assert len(lines) == 4
+        assert len(lines) == 3
         for line in lines:
             assert isinstance(json.loads(line), dict)
 
@@ -60,7 +58,7 @@ class TestSessionStore:
         store.append_message("s1", _msg("assistant", "第二条"))
         restarted = SessionStore(tmp_path)
         records = restarted.load_records("s1")
-        assert len(records) == 3
+        assert len(records) == 2
         contents = [
             r["message"]["content"] for r in records if r["kind"] == "message"
         ]
@@ -72,7 +70,7 @@ class TestSessionStore:
             store.append_message("s1", _msg("user" if i % 2 == 0 else "assistant", f"m{i}"))
         message_records = [r for r in store.load_records("s1") if r["kind"] == "message"]
         third_ordinal = message_records[2]["ordinal"]
-        assert third_ordinal == 3
+        assert third_ordinal == 2
         store.append_compaction(
             "s1", compressed_up_to=third_ordinal, summary="S", model="deepseek-flash"
         )
@@ -93,9 +91,8 @@ class TestSessionStore:
         with (tmp_path / "sessions" / "s1.jsonl").open("a", encoding="utf-8") as fh:
             fh.write("{{{ 这不是合法JSON\n")
         records = store.load_records("s1")
-        assert len(records) == 4
+        assert len(records) == 3
         assert len([r for r in records if r["kind"] == "message"]) == 3
-        assert len([r for r in records if r["kind"] == "session_meta"]) == 1
         assert len(store.read_context_messages("s1")) == 3
 
     def testLastModifiedAndIds(self, tmp_path: Path) -> None:
@@ -141,8 +138,8 @@ class TestSessionStore:
         store = SessionStore(tmp_path)
         for i in range(5):
             store.append_message("s1", _msg("user" if i % 2 == 0 else "assistant", f"m{i}"))
-        store.append_compaction("s1", compressed_up_to=2, summary="S1", model="m")
-        store.append_compaction("s1", compressed_up_to=4, summary="S2", model="m")
+        store.append_compaction("s1", compressed_up_to=1, summary="S1", model="m")
+        store.append_compaction("s1", compressed_up_to=3, summary="S2", model="m")
         ctx = store.read_context_messages("s1")
         assert len(ctx) == 2
         assert ctx[0]["name"] == COMPACTION_SUMMARY_NAME
@@ -158,7 +155,7 @@ class TestSessionStore:
             fh.write("not-json\n")
         with caplog.at_level(logging.WARNING, logger="harness.session.store"):
             records = store.load_records("s1")
-        assert len(records) == 2
+        assert len(records) == 1
         assert any(
             r.levelno >= logging.WARNING and "非法 JSON" in r.getMessage()
             for r in caplog.records

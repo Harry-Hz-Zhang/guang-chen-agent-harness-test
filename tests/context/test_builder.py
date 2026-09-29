@@ -7,8 +7,11 @@ from typing import Any
 from unittest.mock import MagicMock
 
 from harness.config import RuntimeConfig
-from harness.context.builder import ContextBuilder, estimate_tokens
-from harness.llm import ToolCall
+from harness.context.builder import (
+    MEMORY_TOOL_HINT,
+    ContextBuilder,
+    estimate_tokens,
+)
 from harness.middleware import LoopState, Middleware
 from harness.prompts import SYSTEM_PROMPT
 
@@ -17,13 +20,13 @@ COMPACTION_SUMMARY_NAME = "__compaction_summary__"
 
 def _make_builder(
     history: list[dict[str, Any]],
-    memory_summary: str | None = None,
+    memory_index: str | None = None,
 ) -> tuple[ContextBuilder, MagicMock, MagicMock]:
     """构造注入 mock sessions / mock memory 的 ContextBuilder。"""
     sessions = MagicMock()
     sessions.read_context_messages.return_value = history
     memory = MagicMock()
-    memory.render_summary.return_value = memory_summary
+    memory.render_index.return_value = memory_index
     builder = ContextBuilder(sessions, memory, RuntimeConfig())
     return builder, sessions, memory
 
@@ -45,14 +48,20 @@ class TestContextBuilder:
 
     def testMemoryInjected(self) -> None:
         builder, _, memory = _make_builder(
-            [], memory_summary="用户偏好中文"
+            [], memory_index="- 20260928-143005.md｜用户偏好中文（tags: 偏好）"
         )
         out = builder.build("s1", "你好")
-        memory.render_summary.assert_called_once_with("s1")
+        memory.render_index.assert_called_once_with()
+        memory.render_summary.assert_not_called()
         system_content = out[0]["content"]
         assert "历史记忆" in system_content
         assert "用户偏好中文" in system_content
-        assert system_content == SYSTEM_PROMPT + "\n\n## 历史记忆\n用户偏好中文"
+        assert MEMORY_TOOL_HINT in system_content
+        assert system_content == (
+            SYSTEM_PROMPT
+            + "\n\n## 历史记忆\n- 20260928-143005.md｜用户偏好中文（tags: 偏好）"
+            + f"\n{MEMORY_TOOL_HINT}"
+        )
 
     def testSummaryMessageKeptFirst(self) -> None:
         summary_msg = {
@@ -176,11 +185,6 @@ class TestMiddleware:
         middleware = Middleware()
         middleware.before_model(state)
         middleware.after_model(state)
-        call = ToolCall(id="call_1", name="calc", arguments_raw="{}", args={})
-        result = middleware.wrap_tool_call(
-            call, lambda c: f"执行结果:{c.name}"
-        )
-        assert result == "执行结果:calc"
         assert state.session_id == snapshot["session_id"]
         assert state.round_no == snapshot["round_no"]
         assert state.messages == snapshot["messages"]

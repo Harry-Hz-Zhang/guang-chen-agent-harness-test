@@ -1,13 +1,14 @@
-"""内置工具单元测试：calculator ast 白名单安全求值、search/weather 预置数据、todo 会话隔离与持久化。"""
+"""内置工具单元测试：calculator ast 白名单安全求值、search/weather 预置数据、read_memory 记忆读取。"""
 
 from pathlib import Path
 
 import pytest
 
+from harness.memory.store import MemoryStore
 from harness.tools.base import ToolExecutionError
 from harness.tools.calculator import CalculatorTool
+from harness.tools.read_memory import ReadMemoryTool
 from harness.tools.search import KNOWLEDGE_BASE, SearchTool
-from harness.tools.todo import TodoTool
 from harness.tools.weather import WeatherTool
 
 _WEATHER_TERMS: tuple[str, ...] = ("晴", "多云", "阴", "雨", "雪", "阵雨")
@@ -65,9 +66,9 @@ class TestCalculator:
             tool.execute(expression="2.0**2.0**1000")
 
     def testDeepNestingStructured(self) -> None:
-        """超长链式加法（解析期嵌套过深）不裸抛 RecursionError，而是结构化错误。"""
+        """超长链式加法（解析期嵌套过深）不裸抛 RecursionError，而是结构化 ToolExecutionError。"""
         tool = CalculatorTool()
-        with pytest.raises(ToolExecutionError, match="嵌套"):
+        with pytest.raises(ToolExecutionError, match="无法计算"):
             tool.execute(expression="1+" * 5000 + "1")
 
     def testHugePowExponentRejected(self) -> None:
@@ -75,18 +76,6 @@ class TestCalculator:
         tool = CalculatorTool()
         with pytest.raises(ToolExecutionError, match="指数"):
             tool.execute(expression="10**10**5")
-
-    def testComplexResultRejected(self) -> None:
-        """(-8)**0.5 产生复数结果时抛结构化错误，不返回复数字符串。"""
-        tool = CalculatorTool()
-        with pytest.raises(ToolExecutionError, match="范围"):
-            tool.execute(expression="(-8)**0.5")
-
-    def testNonFiniteResultRejected(self) -> None:
-        """1e308*10 溢出到 inf 时抛结构化错误，不返回 "inf"。"""
-        tool = CalculatorTool()
-        with pytest.raises(ToolExecutionError, match="范围"):
-            tool.execute(expression="1e308*10")
 
 
 class TestSearch:
@@ -132,44 +121,55 @@ class TestWeather:
         assert "暂无" in result
 
 
-class TestTodo:
-    """覆盖 todo 的添加列出、会话隔离与持久化。"""
+class TestReadMemoryTool:
+    """覆盖 read_memory 的正常读取、未找到提示与非法文件名拒绝。"""
 
-    def testAddAndList(self, tmp_path: Path) -> None:
-        """add 返回含编号 1 的提示、list_todos 返回该待办；execute 按 action 分发两动作。"""
-        tool = TodoTool(data_dir=tmp_path, session_id="s1")
-        assert tool.name == "todo"
-        assert tool.parameters["type"] == "object"
-        assert tool.parameters["properties"]["action"]["enum"] == ["add", "list"]
-        assert tool.parameters["required"] == ["action"]
-        added = tool.add(todo="写周报")
-        assert "1" in added
-        assert "写周报" in added
-        assert tool.list_todos() == ["写周报"]
-        assert "写周报" in tool.execute(action="list")
-        second = tool.execute(action="add", todo="开会")
-        assert "2" in second
-        assert tool.list_todos() == ["写周报", "开会"]
+    @staticmethod
+    def _make_tool(tmp_path: Path) -> ReadMemoryTool:
+        """构造绑定了真实 MemoryStore 的 ReadMemoryTool，并预置一条记忆。"""
+        memory_dir = tmp_path / "MEMORY"
+        memory_dir.mkdir()
+        (memory_dir / "20260928-143005.md").write_text(
+            "日期：2026-09-28\n\n- 用户偏好简洁回复\n", encoding="utf-8"
+        )
+        return ReadMemoryTool(MemoryStore(tmp_path))
 
-    def testSessionIsolation(self, tmp_path: Path) -> None:
-        """同目录不同 session 的待办互不可见：s2 列出为空列表（长度 0，非 None）。"""
-        s1 = TodoTool(data_dir=tmp_path, session_id="s1")
-        s1.add(todo="写周报")
-        s1.add(todo="回邮件")
-        s2 = TodoTool(data_dir=tmp_path, session_id="s2")
-        todos = s2.list_todos()
-        assert todos is not None
-        assert len(todos) == 0
+    def testReadExistingMemoryFile(self, tmp_path: Path) -> None:
+        """按索引文件名读取记忆全文（含日期行）。"""
+        tool = self._make_tool(tmp_path)
+        content = tool.execute(file="20260928-143005.md")
+        assert content.startswith("日期：")
+        assert "- 用户偏好简洁回复" in content
 
-    def testPersistence(self, tmp_path: Path) -> None:
-        """新建同目录同会话实例（模拟重启）仍能按原顺序读回全部待办。"""
-        first = TodoTool(data_dir=tmp_path, session_id="s1")
-        first.add(todo="写周报")
-        first.add(todo="回邮件")
-        restarted = TodoTool(data_dir=tmp_path, session_id="s1")
-        assert restarted.list_todos() == ["写周报", "回邮件"]
+    def testReadMissingMemoryFileFriendlyMessage(self, tmp_path: Path) -> None:
+        """文件不存在返回友好提示字符串，不抛异常。"""
+        tool = self._make_tool(tmp_path)
+        result = tool.execute(file="nope.md")
+        assert "未找到记忆文件" in result
+        assert "nope.md" in result
 
-    def testInvalidSessionIdRejected(self, tmp_path: Path) -> None:
-        """含 Windows 保留字符（冒号等）的 session_id 在构造期即被拒绝：抛 ToolExecutionError。"""
-        with pytest.raises(ToolExecutionError, match="session_id"):
-            TodoTool(data_dir=tmp_path, session_id="a:b")
+    def testInvalidFileParamRaises(self, tmp_path: Path) -> None:
+        """空文件名抛 ToolExecutionError。"""
+        tool = self._make_tool(tmp_path)
+        with pytest.raises(ToolExecutionError, match="file"):
+            tool.execute(file="")
+
+    def testNonMdExtensionRaises(self, tmp_path: Path) -> None:
+        """非 .md 后缀抛 ToolExecutionError。"""
+        tool = self._make_tool(tmp_path)
+        with pytest.raises(ToolExecutionError, match="file"):
+            tool.execute(file="MEMORY.md.txt")
+
+    def testTraversalPathRejected(self, tmp_path: Path) -> None:
+        """路径穿越形态（../ 与子目录）抛 ToolExecutionError，data_dir 外零读取。"""
+        tool = self._make_tool(tmp_path)
+        with pytest.raises(ToolExecutionError, match="file"):
+            tool.execute(file="../state.json")
+        with pytest.raises(ToolExecutionError, match="file"):
+            tool.execute(file="a/b.md")
+
+    def testNonStringParamRaises(self, tmp_path: Path) -> None:
+        """非字符串参数抛 ToolExecutionError。"""
+        tool = self._make_tool(tmp_path)
+        with pytest.raises(ToolExecutionError, match="file"):
+            tool.execute(file=None)

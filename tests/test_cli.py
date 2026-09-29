@@ -1,5 +1,6 @@
 """CLI REPL 的单元测试（全 mock loop/sessions，零网络）。"""
 
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -8,6 +9,22 @@ import pytest
 from harness.config import RuntimeConfig
 from harness.llm import LLMError, ReasoningDelta, TextDelta
 from harness.loop import LoopResult
+
+
+class TestRegistryAssembly:
+
+    def testRegistryIncludesReadMemory(self, tmp_path: Path) -> None:
+        """_build_registry 注册 read_memory（绑定全局记忆存储）及 calculator / search / weather。"""
+        from harness.__main__ import _build_registry
+        from harness.memory.store import MemoryStore
+
+        registry = _build_registry(MemoryStore(tmp_path))
+        names = registry.names()
+        assert "read_memory" in names
+        assert "calculator" in names
+        assert "search" in names
+        assert "weather" in names
+        assert registry.get("read_memory").name == "read_memory"
 
 
 def _ok_result(answer: str = "回答") -> LoopResult:
@@ -191,6 +208,7 @@ class TestCli:
         from harness import __main__ as cli
 
         monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+        monkeypatch.setattr(cli, "load_dotenv", lambda *a, **k: False)
         loop = MagicMock()
         monkeypatch.setattr(cli, "ReactLoop", lambda *a, **k: loop)
         monkeypatch.setattr(cli, "MemorySummarizer", MagicMock())
@@ -199,6 +217,24 @@ class TestCli:
         assert code != 0
         assert "DEEPSEEK_API_KEY" in writer.text
         assert loop.run.call_count == 0
+
+    def testApiKeyLoadedFromDotenv(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """main 启动时通过 load_dotenv 自动加载密钥。"""
+        from harness import __main__ as cli
+
+        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+
+        def _mock_load() -> bool:
+            monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-mock-key")
+            return True
+
+        monkeypatch.setattr(cli, "load_dotenv", _mock_load)
+        loop = MagicMock()
+        monkeypatch.setattr(cli, "ReactLoop", lambda *a, **k: loop)
+        monkeypatch.setattr(cli, "MemorySummarizer", MagicMock())
+        writer = _Writer()
+        code = cli.main(["--session", "s1"], ["/exit"], writer)
+        assert code == 0
 
 
 class TestRender:
@@ -258,6 +294,30 @@ class TestStreamRendering:
         )
         assert raw.lines == ["答", "案", "\n"]
 
+    def testReplMultiTurnReset(self) -> None:
+        """多轮问答下每轮独立渲染，思考前缀与换行正常复位。"""
+        from harness.__main__ import run_repl
+
+        loop = MagicMock()
+
+        def fake_run(text: str, session_id: str, on_event: Any = None) -> LoopResult:
+            if on_event is not None:
+                on_event(ReasoningDelta(text="思"))
+                on_event(TextDelta(text="答"))
+            return _ok_result()
+
+        loop.run.side_effect = fake_run
+        writer = _Writer()
+        raw = _Writer()
+        run_repl(
+            loop, _mock_sessions(), RuntimeConfig(), ["第一问", "第二问", "/exit"],
+            writer, session_id="s1", raw_writer=raw,
+        )
+        assert raw.lines == [
+            "思考｜", "思", "\n", "答", "\n",
+            "思考｜", "思", "\n", "答", "\n",
+        ]
+
 
 class TestSessionManagement:
 
@@ -281,35 +341,123 @@ class TestSessionManagement:
         assert "3" in writer.text
         assert "最近压缩" in writer.text
 
-    def testOnSessionChangeCallbackInvoked(self) -> None:
-        """/new 切会话时通知 on_session_change 回调（todo 换绑依据）。"""
+
+class TestSessionSwitch:
+    """/switch 会话切换命令的单元测试（全 mock loop/sessions，零网络）。"""
+
+    def testCommandSwitchToExistingSession(self) -> None:
+        """切换到已有会话：后续输入写入目标会话，输出含提示与消息数。"""
         from harness.__main__ import run_repl
 
         loop = MagicMock()
         loop.run.return_value = _ok_result()
-        callback = MagicMock()
+        sessions = _mock_sessions(_message_records(6))
+        sessions.session_ids.return_value = ["s1", "s2"]
         writer = _Writer()
         run_repl(
-            loop, _mock_sessions(), RuntimeConfig(), ["/new", "你好", "/exit"],
-            writer, session_id="s1", on_session_change=callback,
+            loop, sessions, RuntimeConfig(), ["/switch s2", "你好", "/exit"],
+            writer, session_id="s1",
         )
-        callback.assert_called_once()
-        new_id = callback.call_args.args[0]
-        assert new_id != "s1"
-        assert loop.run.call_args.args[1] == new_id
+        assert "已切换会话 s2" in writer.text
+        assert "6 条消息" in writer.text
+        assert loop.run.call_args.args[1] == "s2"
 
-    def testRebindableTodoToolSwitchesSession(self, tmp_path: Any) -> None:
-        """RebindableTodoTool 按 ref 当前会话换绑存储文件。"""
-        from pathlib import Path
+    def testCommandSwitchUnknownSessionKeepsCurrent(self) -> None:
+        """切换到不存在的会话：输出不存在提示，当前会话不变且 REPL 存活。"""
+        from harness.__main__ import run_repl
 
-        from harness.__main__ import RebindableTodoTool
+        loop = MagicMock()
+        loop.run.return_value = _ok_result()
+        sessions = _mock_sessions(_message_records(2))
+        sessions.session_ids.return_value = ["s1"]
+        writer = _Writer()
+        run_repl(
+            loop, sessions, RuntimeConfig(), ["/switch nope", "你好", "/exit"],
+            writer, session_id="s1",
+        )
+        assert "不存在" in writer.text
+        assert "nope" in writer.text
+        assert loop.run.call_count == 1
+        assert loop.run.call_args.args[1] == "s1"
 
-        ref: dict[str, str] = {"session_id": "s1"}
-        tool = RebindableTodoTool(Path(tmp_path), ref)
-        added = tool.execute(action="add", todo="写周报")
-        assert "1" in added
-        assert (tmp_path / "todos" / "s1.json").exists()
-        ref["session_id"] = "s2"
-        listing = tool.execute(action="list")
-        assert "暂无" in listing
-        assert not (tmp_path / "todos" / "s2.json").exists()
+    def testCommandSwitchMissingArgUsage(self) -> None:
+        """/switch 缺参数：输出用法提示，当前会话不变。"""
+        from harness.__main__ import run_repl
+
+        loop = MagicMock()
+        loop.run.return_value = _ok_result()
+        sessions = _mock_sessions(_message_records(2))
+        sessions.session_ids.return_value = ["s1"]
+        writer = _Writer()
+        run_repl(
+            loop, sessions, RuntimeConfig(), ["/switch", "你好", "/exit"],
+            writer, session_id="s1",
+        )
+        assert "用法" in writer.text
+        assert "/switch" in writer.text
+        assert loop.run.call_count == 1
+        assert loop.run.call_args.args[1] == "s1"
+
+    def testCommandSwitchExtraArgUsage(self) -> None:
+        """/switch 多余参数：输出用法提示，不进入 LLM。"""
+        from harness.__main__ import run_repl
+
+        loop = MagicMock()
+        loop.run.return_value = _ok_result()
+        sessions = _mock_sessions(_message_records(2))
+        sessions.session_ids.return_value = ["s1"]
+        writer = _Writer()
+        run_repl(
+            loop, sessions, RuntimeConfig(), ["/switch a b", "/exit"],
+            writer, session_id="s1",
+        )
+        assert "用法" in writer.text
+        assert loop.run.call_count == 0
+
+    def testCommandSwitchCurrentSessionIdempotent(self) -> None:
+        """切换到当前会话：幂等处理，正常输出切换提示。"""
+        from harness.__main__ import run_repl
+
+        loop = MagicMock()
+        loop.run.return_value = _ok_result()
+        sessions = _mock_sessions(_message_records(2))
+        sessions.session_ids.return_value = ["s1"]
+        writer = _Writer()
+        run_repl(
+            loop, sessions, RuntimeConfig(), ["/switch s1", "你好", "/exit"],
+            writer, session_id="s1",
+        )
+        assert "已切换会话 s1" in writer.text
+        assert loop.run.call_args.args[1] == "s1"
+
+    def testCommandSwitchNotRoutedToLoop(self) -> None:
+        """切换命令本身不进入 LLM：loop.run 0 次调用。"""
+        from harness.__main__ import run_repl
+
+        loop = MagicMock()
+        loop.run.return_value = _ok_result()
+        sessions = _mock_sessions(_message_records(2))
+        sessions.session_ids.return_value = ["s1", "s2"]
+        writer = _Writer()
+        run_repl(
+            loop, sessions, RuntimeConfig(), ["/switch s2", "/exit"],
+            writer, session_id="s1",
+        )
+        assert loop.run.call_count == 0
+        assert "已切换会话 s2" in writer.text
+
+    def testCommandSwitchEmptySessionNoMessageCount(self) -> None:
+        """切换到空历史会话：提示不带消息计数。"""
+        from harness.__main__ import run_repl
+
+        loop = MagicMock()
+        loop.run.return_value = _ok_result()
+        sessions = _mock_sessions([])
+        sessions.session_ids.return_value = ["s1", "s2"]
+        writer = _Writer()
+        run_repl(
+            loop, sessions, RuntimeConfig(), ["/switch s2", "/exit"],
+            writer, session_id="s1",
+        )
+        switch_lines = [ln for ln in writer.lines if "已切换会话 s2" in ln]
+        assert switch_lines == ["已切换会话 s2"]

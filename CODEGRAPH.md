@@ -14,6 +14,7 @@
 ```mermaid
 graph TD
     CLI["CLI / REPL 入口<br/>src/harness/__main__.py"] --> Loop["ReAct 决策循环<br/>ReactLoop (loop.py)"]
+    CLI --> Renderer["流式终端渲染器<br/>StreamRenderer (renderer.py)"]
     CLI --> Sessions["会话持久化存储<br/>SessionStore (session/store.py)"]
     CLI --> Memory["长期记忆存储<br/>MemoryStore (memory/store.py)"]
     CLI --> Summarizer["闲置记忆后台总结器<br/>MemorySummarizer (memory/summarizer.py)"]
@@ -41,7 +42,7 @@ graph TD
     Summarizer --> LLM
     Summarizer --> Trace
 
-    Registry --> BuiltinTools["内置工具集合<br/>Calculator / Search / Weather / Todo"]
+    Registry --> BuiltinTools["内置工具集合<br/>Calculator / Search / Weather / ReadMemory"]
 ```
 
 ---
@@ -121,10 +122,10 @@ sequenceDiagram
 
 | 模块文件 | 关键类 / 函数 | 职责与设计要点 |
 | :--- | :--- | :--- |
-| [`src/harness/loop.py`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/loop.py) | [`ReactLoop`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/loop.py#L39)<br/>[`LoopResult`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/loop.py#L30) | 驱动 ReAct 循环，首轮落库 user 消息，支持单次交互 `max_rounds` 上限，控制流式事件 `_tee` 转发与超时线程隔离执行。 |
+| [`src/harness/loop.py`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/loop.py) | [`ReactLoop`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/loop.py#L39)<br/>[`LoopResult`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/loop.py#L30) | 驱动 ReAct 循环，首轮落库 user 消息，支持单次交互 `max_rounds` 上限与流式事件 `_tee` 转发。 |
 | [`src/harness/parser.py`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/parser.py) | [`parse_response`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/parser.py#L48)<br/>[`validate_arguments`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/parser.py#L60)<br/>[`FinalAnswer`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/parser.py#L19)<br/>[`ToolCallBatch`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/parser.py#L26) | 输出解析与二分判定。对模型返回的 JSON 参数执行必填项与未知字段的显式校验，生成标准中文结构化错误，不吞异常。 |
 | [`src/harness/llm.py`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/llm.py) | [`LLMClient`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/llm.py#L67)<br/>[`AIMessage`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/llm.py#L48)<br/>[`collect_stream`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/llm.py#L289)<br/>`StreamEvent` | 封装 OpenAI SDK 协议对接 DeepSeek。支持同步 `invoke` 与生成器 `stream`，流式事件细分为 `ReasoningDelta`、`TextDelta`、`ToolCallDelta`、`UsageEvent`、`DoneEvent`。 |
-| [`src/harness/middleware.py`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/middleware.py) | [`Middleware`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/middleware.py#L31)<br/>[`LoopState`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/middleware.py#L17) | 中间件规范基类。定义 `before_model`、`after_model` 与 `wrap_tool_call` 扩展点，支撑压缩、安全拦截与限流。 |
+| [`src/harness/middleware.py`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/middleware.py) | [`Middleware`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/middleware.py#L31)<br/>[`LoopState`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/middleware.py#L17) | 中间件规范基类。定义 `before_model`、`after_model` 扩展点，支撑超长压缩等会话级处理。 |
 | [`src/harness/config.py`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/config.py) | [`RuntimeConfig`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/config.py#L30) | 运行时全局配置加载器。解析环境变量覆盖默认项（模型、base_url、API key、超时时间、上下文阈值等）。 |
 | [`src/harness/prompts.py`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/prompts.py) | `SYSTEM_PROMPT`<br/>`COMPACTION_PROMPT`<br/>`MEMORY_SUMMARY_PROMPT` | 集中放置全系统提示词模板，杜绝硬编码散落在逻辑代码中。 |
 
@@ -148,10 +149,10 @@ sequenceDiagram
 | :--- | :--- | :--- |
 | [`src/harness/tools/base.py`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/tools/base.py) | [`BaseTool`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/tools/base.py#L32)<br/>[`ToolExecutionError`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/tools/base.py#L13) | 工具抽象基类。声明 `name`、`description`、`parameters` Schema，并规定 `execute(**kwargs)` 统一返回字符串协议。 |
 | [`src/harness/tools/registry.py`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/tools/registry.py) | [`ToolRegistry`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/tools/registry.py#L16)<br/>[`ToolNotFoundError`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/tools/registry.py#L11) | 工具注册中心。负责工具注册、按名获取、导出 OpenAI Function Calling 规范的 tools schema 列表。 |
-| [`src/harness/tools/calculator.py`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/tools/calculator.py) | [`CalculatorTool`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/tools/calculator.py#L13) | 安全四则运算器。基于 Python AST 语法树安全解析计算，严禁 `eval()` 执行任意代码。 |
+| [`src/harness/tools/calculator.py`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/tools/calculator.py) | [`CalculatorTool`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/tools/calculator.py#L40) | 安全四则运算器。基于 Python AST 语法树白名单安全解析计算，严禁 `eval()` 执行任意代码。 |
 | [`src/harness/tools/search.py`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/tools/search.py) | [`SearchTool`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/tools/search.py#L12) | 模拟联网搜索工具。基于关键词提供模拟检索结果。 |
 | [`src/harness/tools/weather.py`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/tools/weather.py) | [`WeatherTool`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/tools/weather.py#L12) | 模拟天气查询工具。按城市返回天气与温度信息。 |
-| [`src/harness/tools/todo.py`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/tools/todo.py) | [`TodoTool`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/tools/todo.py#L16) | 会话隔离的待办管理工具。数据持久化于 `data/todos/<session_id>.json`，支持 `add` 与 `list` 动作。 |
+| [`src/harness/tools/read_memory.py`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/tools/read_memory.py) | [`ReadMemoryTool`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/tools/read_memory.py#L12) | 全局长期记忆读取工具。按文件名读取记忆详细内容并返回。 |
 
 ---
 
@@ -160,7 +161,8 @@ sequenceDiagram
 | 模块文件 | 关键类 / 函数 | 职责与设计要点 |
 | :--- | :--- | :--- |
 | [`src/harness/trace.py`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/trace.py) | [`TraceCollector`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/trace.py#L143)<br/>[`JsonlExporter`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/trace.py#L75) | 分布式链路追踪标准实现。管理 Trace 与父子 Span 生命周期，自动记录 LLM 思考耗时、token 消耗、工具输入输出，落盘为 JSONL 文件。 |
-| [`src/harness/__main__.py`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/__main__.py) | [`main`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/__main__.py#L237)<br/>[`run_repl`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/__main__.py#L104)<br/>[`RebindableTodoTool`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/__main__.py#L45) | 应用启动装配入口与交互式 REPL。内置命令（`/new`、`/sessions`、`/history`、`/exit`）拦截，流式思考与正文分通道渲染。 |
+| [`src/harness/renderer.py`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/renderer.py) | [`StreamRenderer`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/renderer.py#L15)<br/>[`render_event`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/renderer.py#L70) | 流式事件终端渲染器与状态管理。维护思考通道（带前缀）与正文通道（无前缀）的状态切换，逐片委托写入与回合结束换行补齐。 |
+| [`src/harness/__main__.py`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/__main__.py) | [`main`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/__main__.py#L187)<br/>[`run_repl`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/__main__.py#L63)<br/>[`_build_registry`](file:///Users/zhanghongze/PycharmProjects/guang-chen-agent-harness-test/src/harness/__main__.py#L177) | 应用启动装配入口与交互式 REPL。内置命令（`/new`、`/switch`、`/sessions`、`/history`、`/exit`）拦截，流式思考与正文分通道渲染。 |
 
 ---
 

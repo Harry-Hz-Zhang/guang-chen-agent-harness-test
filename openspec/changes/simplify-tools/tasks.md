@@ -1,0 +1,48 @@
+# Tasks — 工具集简化（calculator 精简 + todo 删除）
+
+- [x] Task 1: 重写 calculator.py 为简化版并同步精简 TestCalculator
+  - complexity: 🟢
+  - files: Modify `src/harness/tools/calculator.py`、`tests/tools/test_builtin_tools.py`
+  - RED:
+    - 先改测试：删除 `TestCalculator#testComplexResultRejected` 与 `TestCalculator#testNonFiniteResultRejected`
+    - `TestCalculator#testDeepNestingStructured` 的 match 从 `"嵌套"` 放宽为 `"无法计算"`，docstring 同步改为「超长链式加法不裸抛 RecursionError，而是结构化 ToolExecutionError」
+    - 其余 6 个用例（testArithmeticPrecedence / testPower / testDivisionByZero / testDangerousExpressionRejected / testFloatPowOverflowStructured / testHugePowExponentRejected）一字不改
+    - `uv run pytest tests/tools/test_builtin_tools.py -q` → testDeepNestingStructured 失败（现实现消息「表达式嵌套过深，无法解析」不含「无法计算」），其余全绿
+  - GREEN:
+    - 按 design.md §3 骨架重写 `src/harness/tools/calculator.py`（≤ 100 行：白名单字典上移模块级、删两个私有异常类与文案映射、三层异常处理收敛为除零专案 + 一条 broad except、删复数/非有限/str 转换收尾检查与 `_describe_number`）
+    - `uv run pytest tests/tools/test_builtin_tools.py -q`（全部转绿）
+  - ASSERT:
+    - `uv run pytest` 除既有失败 `testMiddlewareHooksInvoked`（loop.py 未提交改动所致，与本 change 无关）外全绿；总数 178 → 176（删 2 个 calculator 边界用例）
+    - `wc -l src/harness/tools/calculator.py` ≤ 100（原 205）
+    - calculator.py 中不再出现 `_UnsupportedNode` / `_PowExponentTooLarge` / `_EVAL_ERROR_MESSAGES` / `_describe_number`
+    - 所有函数含类型注解（含返回值）与中文 docstring；无 print；无裸抛异常（全部转 ToolExecutionError 且链上 original）
+  - DoD:
+    - calculator.py ≤ 100 行且行为符合 design.md §4 推演表
+    - test_loop.py 的 8 个 calculator 相关用例零改动通过
+  - 最小验证: `uv run pytest tests/tools/test_builtin_tools.py -q`
+
+- [x] Task 2: 删除 TodoTool 及其连带机制，同步测试与文档
+  - complexity: 🟡
+  - files: Delete `src/harness/tools/todo.py`；Modify `src/harness/tools/__init__.py`、`src/harness/__main__.py`、`tests/tools/test_builtin_tools.py`、`tests/test_cli.py`、`CODEGRAPH.md`、`README.md`
+  - RED:
+    - 先改测试：`tests/tools/test_builtin_tools.py` 删除 `TestTodo` 整类（4 用例）与 `TodoTool` 导入，模块 docstring 去掉「todo 会话隔离与持久化」
+    - `tests/test_cli.py` 删除 `testOnSessionChangeCallbackInvoked`、`testRebindableTodoToolSwitchesSession`、`testCommandSwitchInvokesCallback`；`testCommandSwitchCurrentSessionIdempotent` 去掉 `on_session_change=callback` 实参与 2 条 callback 断言（保留幂等提示与 loop 路由断言）；`testRegistryIncludesReadMemory` 暂不动（RED 阶段保持现状）
+    - `uv run pytest tests/test_cli.py tests/tools/test_builtin_tools.py -q` → 裁剪后的 testCommandSwitchCurrentSessionIdempotent 及其余保留用例全绿（实参去掉后与现实现兼容，证明测试裁剪无副作用）
+    - 接口断言 RED（对现实现必失败，作为删除目标的可执行规格）：`PYTHONPATH=src uv run python -c "import inspect, harness.__main__ as m; assert 'on_session_change' not in inspect.signature(m.run_repl).parameters"` → AssertionError（现实现仍有该参数）；`PYTHONPATH=src uv run python -c "import inspect, harness.__main__ as m; assert list(inspect.signature(m._build_registry).parameters) == ['memory']"` → AssertionError（现实现签名为 config/session_ref/memory 三参）
+  - GREEN:
+    - 删除 `src/harness/tools/todo.py`；`tools/__init__.py` 移除 TodoTool 导入与 `__all__` 条目
+    - `__main__.py`：删 `TodoTool` 导入、`RebindableTodoTool` 整类、`run_repl` 的 `on_session_change` 参数与 3 处调用点、`main()` 的 `session_ref` 与回调闭包；`_build_registry` 改为 `(memory)` 单参并注册 calculator / search / weather / read_memory 四工具，`main()` 调用处与 docstring 同步
+    - `tests/test_cli.py#testRegistryIncludesReadMemory` 适配新签名 `_build_registry(memory)` 并删除 `assert "todo" in names`
+    - `uv run pytest tests/test_cli.py tests/tools/test_builtin_tools.py -q`（全部转绿）
+  - ASSERT:
+    - `uv run pytest` 除既有失败 `testMiddlewareHooksInvoked`（loop.py 未提交改动所致，与本 change 无关）外全绿；总数 178 → 169（- 4 TestTodo - 3 test_cli 删除 - 2 calculator 删除）
+    - `grep -rn "TodoTool\|RebindableTodoTool\|on_session_change\|session_ref" src/ tests/` 零命中
+    - `PYTHONPATH=src uv run python -c "from unittest.mock import MagicMock; from harness.__main__ import _build_registry; r=_build_registry(MagicMock()); assert sorted(r.names()) == ['calculator','read_memory','search','weather']"`（注册恰 4 个工具，满足 PRD「至少三个」）
+    - `/new` `/switch` `/sessions` `/history` 命令用例（TestSessionSwitch 保留用例 + testCommandNew）全部通过，行为零变化
+    - CODEGRAPH.md 删除 todo.py 行；README.md 去掉 `todos/<id>.json` 与工具清单 todo 字样
+    - `codegraph sync` 执行成功；`codegraph impact CalculatorTool` 中 tests/test_loop.py 的 8 个用例仍为受影响符号
+  - DoD:
+    - src/ 与 tests/ 中 todo 痕迹清零；`_build_registry(memory)` 注册 4 工具
+    - 全量测试除既有 1 项失败外全绿 + codegraph sync 完成
+    - `data/todos/` 遗留数据文件不动（已 gitignore，无代码引用）
+  - 最小验证: `uv run pytest tests/test_cli.py tests/tools/test_builtin_tools.py -q && uv run pytest`

@@ -1,6 +1,6 @@
-"""MemorySummarizer 的单元测试（闲置判定 + 后台线程 + 独立 trace）。"""
+"""MemorySummarizer（闲置增量提取）的单元测试 —— 对应 refactor-global-memory tasks.md Task 2 RED 条目。"""
 
-import threading
+import json
 import time
 from typing import Any
 from unittest.mock import MagicMock
@@ -8,9 +8,14 @@ from unittest.mock import MagicMock
 from harness.config import RuntimeConfig
 from harness.llm import AIMessage
 from harness.memory.summarizer import MemorySummarizer
-from harness.prompts import MEMORY_SUMMARY_PROMPT
+from harness.prompts import MEMORY_EXTRACT_PROMPT
 
 _THREAD_NAME = "harness-memory-summarizer"
+
+_VALID_EXTRACTION = json.dumps(
+    {"memories": ["用户养猫名叫小花"], "tags": ["个人", "宠物"]},
+    ensure_ascii=False,
+)
 
 
 def _make_summarizer(
@@ -30,29 +35,38 @@ def _make_summarizer(
     return MemorySummarizer(sessions, memory, llm, trace, config)
 
 
-def _idle_sessions() -> MagicMock:
+def _message_records(*contents: str) -> list[dict[str, Any]]:
+    """构造带 ordinal 的 user 消息记录列表（ordinal 从 0 递增）。"""
+    return [
+        {
+            "ordinal": ordinal,
+            "kind": "message",
+            "message": {"role": "user", "content": content},
+        }
+        for ordinal, content in enumerate(contents)
+    ]
+
+
+def _idle_sessions(records: list[dict[str, Any]]) -> MagicMock:
     """构造只有一个闲置会话 s1 的 mock SessionStore。"""
     sessions = MagicMock()
     sessions.session_ids.return_value = ["s1"]
     sessions.last_modified.return_value = time.time() - 100_000
-    sessions.read_context_messages.return_value = [
-        {"role": "user", "content": "我的猫叫小花"},
-        {"role": "assistant", "content": "好的，记住了。"},
-    ]
+    sessions.load_records.return_value = records
     return sessions
 
 
-def _fresh_memory() -> MagicMock:
-    """构造无记忆（render_summary 为 None）的 mock MemoryStore。"""
+def _fresh_memory(summarized_ordinal: int = -1) -> MagicMock:
+    """构造提取进度为 summarized_ordinal 的 mock MemoryStore。"""
     memory = MagicMock()
-    memory.render_summary.return_value = None
+    memory.summarized_ordinal.return_value = summarized_ordinal
     return memory
 
 
-def _summary_llm() -> MagicMock:
-    """构造返回固定总结的 mock LLM 客户端。"""
+def _extraction_llm(content: str) -> MagicMock:
+    """构造返回固定文本的 mock LLM 客户端。"""
     llm = MagicMock()
-    llm.invoke.return_value = AIMessage(content="总结：用户养猫名叫小花")
+    llm.invoke.return_value = AIMessage(content=content)
     return llm
 
 
@@ -66,110 +80,144 @@ def _mock_trace() -> MagicMock:
 
 class TestMemorySummarizer:
 
-    def testScanOnceSummarizesIdle(self) -> None:
-        """闲置且未总结的会话被总结一次，prompt 含模板与会话内容。"""
-        sessions = _idle_sessions()
+    def testExtractionPromptScopedToUserInfo(self) -> None:
+        """提取提示词限定用户相关信息，明确排除待办与工具过程。"""
+        assert "未完成事项" not in MEMORY_EXTRACT_PROMPT
+        assert "不要记录待办事项" in MEMORY_EXTRACT_PROMPT
+
+    def testScanOnceExtractsIdleSessionNewMessages(self) -> None:
+        """闲置且有新消息：提取一次，追加 memories/tags 并推进进度到最大 ordinal。"""
+        sessions = _idle_sessions(_message_records("我的猫叫小花", "记一下"))
         memory = _fresh_memory()
-        llm = _summary_llm()
-        trace = _mock_trace()
-        summarizer = _make_summarizer(sessions, memory, llm, trace, idle_seconds=0)
+        llm = _extraction_llm(_VALID_EXTRACTION)
+        summarizer = _make_summarizer(sessions, memory, llm, _mock_trace())
         assert summarizer.scan_once() == ["s1"]
-        memory.write.assert_called_once_with("s1", "总结：用户养猫名叫小花")
-        request = llm.invoke.call_args.args[0]
-        prompt_text = request[0]["content"]
-        assert prompt_text.startswith(MEMORY_SUMMARY_PROMPT)
+        memory.append.assert_called_once_with(
+            ["用户养猫名叫小花"], ["个人", "宠物"]
+        )
+        memory.mark_summarized.assert_called_once_with("s1", 1)
+        prompt_text = llm.invoke.call_args.args[0][0]["content"]
+        assert prompt_text.startswith(MEMORY_EXTRACT_PROMPT)
         assert "我的猫叫小花" in prompt_text
+        assert "记一下" in prompt_text
 
-    def testScanSkipsActive(self) -> None:
-        """活跃会话（mtime 距今小于闲置阈值）不被总结。"""
-        sessions = MagicMock()
-        sessions.session_ids.return_value = ["s2"]
-        sessions.last_modified.return_value = time.time()
-        memory = _fresh_memory()
-        llm = _summary_llm()
-        summarizer = _make_summarizer(sessions, memory, llm, _mock_trace(), idle_seconds=7200)
-        assert summarizer.scan_once() == []
-        assert memory.write.call_count == 0
-        assert llm.invoke.call_count == 0
-
-    def testScanSkipsAlreadySummarized(self) -> None:
-        """已有记忆（render_summary 非 None）的会话不重复总结。"""
-        sessions = _idle_sessions()
-        memory = _fresh_memory()
-        memory.render_summary.return_value = "已有记忆"
-        llm = _summary_llm()
-        summarizer = _make_summarizer(sessions, memory, llm, _mock_trace(), idle_seconds=0)
-        assert summarizer.scan_once() == []
-        assert memory.write.call_count == 0
-        assert llm.invoke.call_count == 0
-
-    def testScanFailureRetriesNextRound(self) -> None:
-        """LLM 失败时本轮返回空列表不抛异常；恢复后下一轮总结成功。"""
-        sessions = _idle_sessions()
-        memory = _fresh_memory()
-        llm = _summary_llm()
-        llm.invoke.side_effect = RuntimeError("boom")
-        summarizer = _make_summarizer(sessions, memory, llm, _mock_trace(), idle_seconds=0)
-        assert summarizer.scan_once() == []
-        llm.invoke.side_effect = None
+    def testScanOnceOnlySendsMessagesAfterOrdinal(self) -> None:
+        """增量提取：进度之后的消息才进入提取 prompt。"""
+        sessions = _idle_sessions(_message_records("旧消息A", "旧消息B", "新消息C"))
+        memory = _fresh_memory(summarized_ordinal=1)
+        llm = _extraction_llm(_VALID_EXTRACTION)
+        summarizer = _make_summarizer(sessions, memory, llm, _mock_trace())
         assert summarizer.scan_once() == ["s1"]
-        memory.write.assert_called_once_with("s1", "总结：用户养猫名叫小花")
+        prompt_text = llm.invoke.call_args.args[0][0]["content"]
+        assert "新消息C" in prompt_text
+        assert "旧消息A" not in prompt_text
+        assert "旧消息B" not in prompt_text
+        memory.mark_summarized.assert_called_once_with("s1", 2)
 
-    def testScanFailureEndsSpanWithError(self) -> None:
-        """LLM 失败时 span 以 error 结束（失败在 trace 中可观测）。"""
-        sessions = _idle_sessions()
+    def testScanOnceSkipsWhenNoNewMessages(self) -> None:
+        """无新消息：不调 LLM、不写入，返回空。"""
+        sessions = _idle_sessions(_message_records("已有消息"))
+        memory = _fresh_memory(summarized_ordinal=0)
+        llm = _extraction_llm(_VALID_EXTRACTION)
+        summarizer = _make_summarizer(sessions, memory, llm, _mock_trace())
+        assert summarizer.scan_once() == []
+        llm.invoke.assert_not_called()
+        memory.append.assert_not_called()
+
+    def testScanOnceSkipsActiveSession(self) -> None:
+        """活跃会话：跳过，不调 LLM。"""
+        sessions = MagicMock()
+        sessions.session_ids.return_value = ["s1"]
+        sessions.last_modified.return_value = time.time()
+        llm = _extraction_llm(_VALID_EXTRACTION)
+        summarizer = _make_summarizer(sessions, _fresh_memory(), llm, _mock_trace())
+        assert summarizer.scan_once() == []
+        llm.invoke.assert_not_called()
+
+    def testScanOnceInvalidJsonSkipsAndKeepsProgress(self) -> None:
+        """LLM 输出非 JSON：本轮跳过、进度不推进（下轮重试）。"""
+        sessions = _idle_sessions(_message_records("我的猫叫小花"))
         memory = _fresh_memory()
-        llm = _summary_llm()
-        llm.invoke.side_effect = RuntimeError("boom")
+        llm = _extraction_llm("这不是 JSON")
+        summarizer = _make_summarizer(sessions, memory, llm, _mock_trace())
+        assert summarizer.scan_once() == []
+        memory.append.assert_not_called()
+        memory.mark_summarized.assert_not_called()
+
+    def testScanOnceNonObjectJsonSkips(self) -> None:
+        """LLM 输出非对象 JSON（数组）：跳过且进度不推进。"""
+        sessions = _idle_sessions(_message_records("我的猫叫小花"))
+        memory = _fresh_memory()
+        llm = _extraction_llm("[1, 2]")
+        summarizer = _make_summarizer(sessions, memory, llm, _mock_trace())
+        assert summarizer.scan_once() == []
+        memory.mark_summarized.assert_not_called()
+
+    def testScanOnceEmptyMemoriesAdvancesProgressOnly(self) -> None:
+        """空 memories 合法：不写记忆但推进进度。"""
+        sessions = _idle_sessions(_message_records("闲聊", "再见"))
+        memory = _fresh_memory()
+        llm = _extraction_llm('{"memories": [], "tags": []}')
+        summarizer = _make_summarizer(sessions, memory, llm, _mock_trace())
+        assert summarizer.scan_once() == ["s1"]
+        memory.append.assert_not_called()
+        memory.mark_summarized.assert_called_once_with("s1", 1)
+
+    def testScanOnceMissingTagsToleratedAsEmpty(self) -> None:
+        """缺少 tags 字段容忍为空列表。"""
+        sessions = _idle_sessions(_message_records("我的猫叫小花"))
+        memory = _fresh_memory()
+        llm = _extraction_llm('{"memories": ["用户养猫名叫小花"]}')
+        summarizer = _make_summarizer(sessions, memory, llm, _mock_trace())
+        assert summarizer.scan_once() == ["s1"]
+        memory.append.assert_called_once_with(["用户养猫名叫小花"], [])
+
+    def testScanOnceLlmFailureLoggedAndSkipped(self) -> None:
+        """LLM 调用失败：返回空、进度不推进、span 以 error 结束。"""
+        sessions = _idle_sessions(_message_records("我的猫叫小花"))
+        memory = _fresh_memory()
+        llm = MagicMock()
+        llm.invoke.side_effect = RuntimeError("api down")
         trace = _mock_trace()
-        summarizer = _make_summarizer(sessions, memory, llm, trace, idle_seconds=0)
+        summarizer = _make_summarizer(sessions, memory, llm, trace)
         assert summarizer.scan_once() == []
-        assert trace.end_llm_span.call_count == 1
-        error = trace.end_llm_span.call_args.kwargs.get("error")
-        assert error is not None
-        assert "boom" in error.get("message", "")
+        memory.mark_summarized.assert_not_called()
+        assert trace.end_llm_span.call_args.kwargs.get("error") is not None
 
-    def testScanSkipsWhenWriteRejected(self) -> None:
-        """总结结果被拒写（write 返回 False）时不计入返回列表。"""
-        sessions = _idle_sessions()
-        memory = _fresh_memory()
-        memory.write.return_value = False
-        llm = _summary_llm()
-        summarizer = _make_summarizer(sessions, memory, llm, _mock_trace(), idle_seconds=0)
-        assert summarizer.scan_once() == []
+    def testScanOnceMultipleSessionsIndependent(self) -> None:
+        """多会话：仅提取有新消息的会话，另一个零 LLM 调用。"""
+        sessions = MagicMock()
+        sessions.session_ids.return_value = ["s1", "s2"]
+        sessions.last_modified.return_value = time.time() - 100_000
+        sessions.load_records.side_effect = [
+            _message_records("s1 的新消息"),
+            _message_records("s2 的旧消息"),
+        ]
+        memory = MagicMock()
+        memory.summarized_ordinal.side_effect = [-1, 0]
+        llm = _extraction_llm(_VALID_EXTRACTION)
+        summarizer = _make_summarizer(sessions, memory, llm, _mock_trace())
+        assert summarizer.scan_once() == ["s1"]
+        assert llm.invoke.call_count == 1
+        memory.append.assert_called_once()
 
-    def testStartStopThread(self) -> None:
-        """start 启动 daemon 线程，stop 后 2 秒内退出。"""
-        sessions = _idle_sessions()
-        memory = _fresh_memory()
-        llm = _summary_llm()
+    def testStartStopThreadLifecycle(self) -> None:
+        """start 幂等、stop 安全（线程按命名退出）。"""
+        sessions = MagicMock()
+        sessions.session_ids.return_value = []
         summarizer = _make_summarizer(
-            sessions, memory, llm, _mock_trace(), idle_seconds=0, scan_interval_seconds=0.05
+            sessions,
+            MagicMock(),
+            MagicMock(),
+            _mock_trace(),
+            scan_interval_seconds=0.05,
         )
         summarizer.start()
-        try:
-            thread = next(t for t in threading.enumerate() if t.name == _THREAD_NAME)
-            assert thread.is_alive()
-            assert thread.daemon
-        finally:
-            summarizer.stop()
-        deadline = time.time() + 2.0
-        while time.time() < deadline:
-            if not any(t.name == _THREAD_NAME and t.is_alive() for t in threading.enumerate()):
-                break
-            time.sleep(0.02)
-        assert not any(t.name == _THREAD_NAME and t.is_alive() for t in threading.enumerate())
-
-    def testScanEmitsIndependentTrace(self) -> None:
-        """总结的 LLM 调用挂独立 trace 且 span kind 为 idle_summary。"""
-        sessions = _idle_sessions()
-        memory = _fresh_memory()
-        llm = _summary_llm()
-        trace = _mock_trace()
-        summarizer = _make_summarizer(sessions, memory, llm, trace, idle_seconds=0)
-        assert summarizer.scan_once() == ["s1"]
-        trace.start_trace.assert_called_once_with("s1")
-        span_call = trace.start_llm_span.call_args
-        assert span_call.args[0] == "tid-1"
-        assert span_call.kwargs.get("kind") == "idle_summary"
-        assert trace.end_llm_span.call_count == 1
+        summarizer.start()
+        thread = summarizer._thread
+        assert thread is not None
+        assert thread.is_alive()
+        assert thread.name == _THREAD_NAME
+        summarizer.stop()
+        thread.join(timeout=1.0)
+        assert not thread.is_alive()

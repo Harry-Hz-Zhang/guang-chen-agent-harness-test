@@ -20,6 +20,9 @@ SUMMARY_MARKER_LINE: str = "以下为此前对话的压缩摘要"
 # 记忆段注入 system 提示词时的小节标题
 MEMORY_SECTION_HEADER: str = "## 历史记忆"
 
+# 记忆索引段末尾的 read_memory 工具使用提示
+MEMORY_TOOL_HINT: str = "（如需某条记忆的完整内容，用 read_memory 工具按文件名读取）"
+
 # 工具结果截断尾注（存储留全量，上下文只保留前缀）
 TOOL_RESULT_TRUNCATION_SUFFIX: str = "\n…[已截断，全文见会话记录]"
 
@@ -28,9 +31,9 @@ def estimate_tokens(messages: list[dict[str, Any]]) -> int:
     """按字符近似估算消息列表的 token 数（不依赖真实 tokenizer）。
 
     公式：ceil(全部消息 content 字符长度之和 / 2.5) + 每条消息 5
-    + 每个工具调用块（assistant 消息 tool_calls 列表的条目）10
-    + 每个工具结果块（role=="tool" 的消息）8。仅用于压缩触发判断，
-    真实用量以 API usage 记入 trace；对同一输入结果幂等。
+        + 每个工具调用块（assistant 消息 tool_calls 列表的条目）10
+        + 每个工具结果块（role=="tool" 的消息）8。仅用于压缩触发判断，
+        真实用量以 API usage 记入 trace；对同一输入结果幂等。
     """
     total_chars = 0
     message_count = 0
@@ -49,9 +52,9 @@ def estimate_tokens(messages: list[dict[str, Any]]) -> int:
             tool_result_blocks += 1
     return (
         math.ceil(total_chars / 2.5)
-        + 5 * message_count
-        + 10 * tool_call_blocks
-        + 8 * tool_result_blocks
+            + 5 * message_count
+            + 10 * tool_call_blocks
+            + 8 * tool_result_blocks
     )
 
 
@@ -81,8 +84,8 @@ class ContextBuilder:
         轮历史已含当前输入，传空串避免重复）。
         """
         history = self._sessions.read_context_messages(session_id)
-        memory_summary = self._memory.render_summary(session_id)
-        messages: list[dict[str, Any]] = [self._build_system_message(memory_summary)]
+        memory_index = self._memory.render_index()
+        messages: list[dict[str, Any]] = [self._build_system_message(memory_index)]
         for message in history:
             messages.append(self._adapt_history_message(message))
         if user_input:
@@ -90,11 +93,14 @@ class ContextBuilder:
         return messages
 
     def _build_system_message(
-        self, memory_summary: str | None
+        self, memory_index: str | None
     ) -> dict[str, Any]:
-        """构造 system 消息：无记忆时为 SYSTEM_PROMPT 原文，有记忆时追加记忆段。"""
-        if memory_summary:
-            content = f"{SYSTEM_PROMPT}\n\n{MEMORY_SECTION_HEADER}\n{memory_summary}"
+        """构造 system 消息：无全局记忆索引时为 SYSTEM_PROMPT 原文，有则追加索引段与工具提示。"""
+        if memory_index:
+            content = (
+                f"{SYSTEM_PROMPT}\n\n{MEMORY_SECTION_HEADER}\n{memory_index}"
+                f"\n{MEMORY_TOOL_HINT}"
+            )
         else:
             content = SYSTEM_PROMPT
         return {"role": "system", "content": content}

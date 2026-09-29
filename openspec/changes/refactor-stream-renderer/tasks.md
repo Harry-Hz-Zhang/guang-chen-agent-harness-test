@@ -1,0 +1,43 @@
+# Tasks — StreamRenderer 抽象与 __main__.py 解耦
+
+- [x] Task 1: 实现 StreamRenderer 核心逻辑与独立单元测试
+  - complexity: 🟡
+  - files: Create `src/harness/renderer.py`、`tests/test_renderer.py`
+  - RED:
+    - `TestStreamRenderer#testReasoningDeltaPrefixAndContent`（传入单个 ReasoningDelta("思") → 返回包含前缀"思考｜"与"思"的内容，且委托 raw_writer 逐片写入）
+    - `TestStreamRenderer#testContinuousReasoningNoDuplicatePrefix`（连续传入两个 ReasoningDelta("思")、ReasoningDelta("考") → 仅首片带前缀，第二片不含前缀，累计内容无冗余前缀）
+    - `TestStreamRenderer#testTransitionReasoningToTextNewline`（传入 ReasoningDelta("思") 后紧接着传入 TextDelta("答") → 产生换行分隔，正文不带"思考"前缀）
+    - `TestStreamRenderer#testNonDeltaEventsNoOutput`（传入 UsageEvent(10, 20) 与 DoneEvent("stop") → 返回空字符串，raw_writer 调用次数为 0）
+    - `TestStreamRenderer#testFinalizeBehavior`（先传入 TextDelta("答") 后调用 finalize() → finalize 返回 "\n" 并写入 raw_writer；未输出任何内容直接 finalize() → 返回 "" 且 raw_writer 0 次调用）
+    - `TestStreamRenderer#testStatelessRenderEventHelper`（直接调用 render_event(ReasoningDelta("思")) → 返回含"思考｜"；render_event(TextDelta("答")) → 返回"答"且不含"思考"）
+  - GREEN:
+    - `uv run pytest tests/test_renderer.py -q`（全部转绿）
+  - ASSERT:
+    - 连续思考分片前缀仅出现一次
+    - 通道切换（思考↔正文）必带换行隔离
+    - 非 Delta 事件 0 次副作用
+    - 空流 finalize 0 次换行输出
+  - DoD:
+    - `tests/test_renderer.py` 全部转绿 + 全部方法含类型注解与中文 docstring
+  - 最小验证: `uv run pytest tests/test_renderer.py -q`
+
+- [x] Task 2: 重构 CLI REPL 集成 StreamRenderer 并同步文档与图谱
+  - complexity: 🟡
+  - files: Modify `src/harness/__main__.py`、`tests/test_cli.py`、`AGENTS.md`、`CODEGRAPH.md`
+  - RED:
+    - `TestStreamRendering#testStreamDeltasRawOutput`（run_repl 处理流式事件序列 → raw 输出列表与原行为完全一致 ["思考｜", "思", "考", "\n", "你", "好"]）
+    - `TestStreamRendering#testStreamTurnEndNewline`（run_repl 回合结束 → raw 输出末尾正确追加换行 ["答", "案", "\n"]）
+    - `TestRender#testStreamEventRendering`（从 harness.__main__ 导入 render_event → 行为完全兼容原规范）
+    - `TestCli#testNoStreamFlag`（config.stream_enabled=False 启动 → loop.run 收到的 on_event 为 None，StreamRenderer 0 次调用）
+    - `TestCli#testReplMultiTurnReset`（模拟连续两轮对话输入 → 每轮独立拥有渲染状态，第二轮思考前缀正常输出）
+  - GREEN:
+    - `uv run pytest tests/test_cli.py -q && uv run pytest`（全部转绿）
+  - ASSERT:
+    - 全量 148+ 测试 100% 通过
+    - `__main__.py` 内部无内联闭包状态机
+    - `codegraph sync` 执行成功，知识图谱保持最新
+  - DoD:
+    - `src/harness/__main__.py` 成功解耦并委托 `StreamRenderer`
+    - `AGENTS.md` 目录登记追加 `renderer.py`
+    - `CODEGRAPH.md` 架构拓扑图与组件说明同步更新
+  - 最小验证: `uv run pytest tests/test_cli.py -q && uv run pytest`

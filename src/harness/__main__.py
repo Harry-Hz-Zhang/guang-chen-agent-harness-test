@@ -1,7 +1,8 @@
 """harness CLI 入口 —— argparse 参数解析、组件装配与 REPL 交互循环。
 
-REPL 内置命令：/exit 退出、/new 切换新会话、/sessions 列出全部会话、
-/history 当前会话概览（命令不进入 LLM）。流式模式下思考与正文分通道
+REPL 内置命令：/exit 退出、/new 新会话、/switch <id> 切换已有会话、
+/sessions 列出全部会话、/history 当前会话概览（命令不进入 LLM）。流式
+模式下思考与正文分通道
 渲染（思考带「思考」前缀）；--no-stream 关闭流式（整段输出）、
 --no-thinking 关闭思考模式。LLM 调用失败输出可读提示并保持 REPL
 可用；缺少 DEEPSEEK_API_KEY 时启动即给出设置指引并以非 0 状态结束。
@@ -10,12 +11,11 @@ REPL 内置命令：/exit 退出、/new 切换新会话、/sessions 列出全部
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 import secrets
 import sys
 from typing import Any, Callable, Iterable
 
-from harness.config import RuntimeConfig
+from harness.config import RuntimeConfig, load_dotenv
 from harness.context.builder import ContextBuilder
 from harness.context.compressor import CompactionMiddleware, ContextCompressor
 from harness.llm import LLMClient, LLMError, StreamEvent
@@ -24,11 +24,10 @@ from harness.memory.store import MemoryStore
 from harness.memory.summarizer import MemorySummarizer
 from harness.middleware import Middleware
 from harness.session.store import SessionStore
-from harness.tools.base import BaseTool
 from harness.tools.calculator import CalculatorTool
+from harness.tools.read_memory import ReadMemoryTool
 from harness.tools.registry import ToolRegistry
 from harness.tools.search import SearchTool
-from harness.tools.todo import TodoTool
 from harness.tools.weather import WeatherTool
 from harness.trace import JsonlExporter, TraceCollector
 
@@ -36,53 +35,13 @@ Writer = Callable[[str], None]
 
 _EXIT_COMMAND = "/exit"
 _NEW_COMMAND = "/new"
+_SWITCH_COMMAND = "/switch"
 _SESSIONS_COMMAND = "/sessions"
 _HISTORY_COMMAND = "/history"
 
-_REASONING_PREFIX = "思考｜"
+from harness.renderer import DEFAULT_REASONING_PREFIX, StreamRenderer, render_event
 
-
-class RebindableTodoTool(BaseTool):
-    """会话可重绑定的待办管理工具包装器。
-
-    持有一个包含当前 session_id 的字典引用（{"session_id": "..."}），
-    当用户通过 /new 等命令切换会话时，动态委托到对应会话的 TodoTool，
-    实现多会话隔离存储的无缝切换。
-    """
-
-    name: str = TodoTool.name
-    description: str = TodoTool.description
-    parameters: dict = TodoTool.parameters
-
-    def __init__(self, data_dir: Path, session_ref: dict[str, str]) -> None:
-        """保存数据根目录与当前会话引用字典。"""
-        self._data_dir: Path = data_dir
-        self._session_ref: dict[str, str] = session_ref
-
-    @property
-    def session_id(self) -> str:
-        """返回当前绑定的会话 id。"""
-        return self._session_ref["session_id"]
-
-    def execute(self, **kwargs: Any) -> str:
-        """按当前 session_id 构造 TodoTool 并执行。"""
-        tool = TodoTool(self._data_dir, self.session_id)
-        return tool.execute(**kwargs)
-
-
-def render_event(event: StreamEvent) -> str:
-    """把单个流式事件渲染为终端文本（思考带前缀、正文原样，其余为空）。
-
-    思考内容与正文分通道：思考行带「思考」前缀（弱化样式由调用方
-    决定），正文行不带前缀——两者视觉可区分。
-    """
-    from harness.llm import ReasoningDelta, TextDelta
-
-    if isinstance(event, ReasoningDelta):
-        return f"{_REASONING_PREFIX}{event.text}"
-    if isinstance(event, TextDelta):
-        return event.text
-    return ""
+_REASONING_PREFIX = DEFAULT_REASONING_PREFIX
 
 
 def _generate_session_id() -> str:
@@ -109,19 +68,16 @@ def run_repl(
     writer: Writer,
     session_id: str | None = None,
     raw_writer: Writer | None = None,
-    on_session_change: Callable[[str], None] | None = None,
 ) -> str:
     """执行 REPL 交互循环，返回最终会话 id。
 
-    命令（/exit /new /sessions /history）不进入 LLM；普通输入路由到
+    命令（/exit /new /switch /sessions /history）不进入 LLM；普通输入路由到
     loop.run（流式配置下挂 on_event 分通道渲染）；LLM 调用失败输出
     可读提示后继续消费输入，不退出。
     """
     if session_id is None:
         session_id = _generate_session_id()
-        if on_session_change is not None:
-            on_session_change(session_id)
-        writer(f"已创建新会话 {session_id}（命令：/new 新会话、/sessions 全部会话、/history 概览、/exit 退出）")
+        writer(f"已创建新会话 {session_id}（命令：/new 新会话、/switch <id> 切换会话、/sessions 全部会话、/history 概览、/exit 退出）")
     else:
         message_count = sum(
             1
@@ -131,7 +87,7 @@ def run_repl(
         if message_count > 0:
             writer(f"已续接会话 {session_id}（{message_count} 条消息）")
         else:
-            writer(f"已创建新会话 {session_id}（命令：/new 新会话、/sessions 全部会话、/history 概览、/exit 退出）")
+            writer(f"已创建新会话 {session_id}（命令：/new 新会话、/switch <id> 切换会话、/sessions 全部会话、/history 概览、/exit 退出）")
 
     target_raw: Writer = raw_writer if raw_writer is not None else _default_raw_writer
 
@@ -143,8 +99,6 @@ def run_repl(
             break
         if text == _NEW_COMMAND:
             session_id = _generate_session_id()
-            if on_session_change is not None:
-                on_session_change(session_id)
             writer(f"已创建新会话 {session_id}")
             continue
         if text == _SESSIONS_COMMAND:
@@ -168,42 +122,44 @@ def run_repl(
             else:
                 writer(f"当前会话 {session_id}：{msg_count} 条消息，累计 {rounds} 轮对话")
             continue
+        parts = text.split()
+        if parts[0] == _SWITCH_COMMAND:
+            if len(parts) != 2:
+                writer(f"用法：{_SWITCH_COMMAND} <会话 id>（可用 /sessions 查看全部会话）")
+                continue
+            target = parts[1]
+            if target not in sessions.session_ids():
+                writer(f"会话 {target} 不存在，可用 /sessions 查看全部会话")
+                continue
+            session_id = target
+            message_count = sum(
+                1
+                for record in sessions.load_records(target)
+                if record.get("kind") == "message"
+            )
+            if message_count > 0:
+                writer(f"已切换会话 {target}（{message_count} 条消息）")
+            else:
+                writer(f"已切换会话 {target}")
+            continue
 
-        in_reasoning = False
-        streamed_any = False
-
-        def on_event(event: StreamEvent) -> None:
-            nonlocal in_reasoning, streamed_any
-            from harness.llm import ReasoningDelta, TextDelta
-
-            if isinstance(event, ReasoningDelta):
-                if not in_reasoning:
-                    if streamed_any:
-                        target_raw("\n")
-                    target_raw(_REASONING_PREFIX)
-                    in_reasoning = True
-                target_raw(event.text)
-                streamed_any = True
-            elif isinstance(event, TextDelta):
-                if in_reasoning:
-                    target_raw("\n")
-                    in_reasoning = False
-                target_raw(event.text)
-                streamed_any = True
+        renderer = StreamRenderer(
+            raw_writer=target_raw, reasoning_prefix=_REASONING_PREFIX
+        )
 
         try:
             result = loop.run(
                 text,
                 session_id,
-                on_event=on_event if config.stream_enabled else None,
+                on_event=renderer.render if config.stream_enabled else None,
             )
         except LLMError as exc:
             writer(f"出错了：{exc}")
             continue
         if not config.stream_enabled or result.truncated:
             writer(result.answer)
-        elif config.stream_enabled and streamed_any:
-            target_raw("\n")
+        elif config.stream_enabled:
+            renderer.finalize()
     return session_id
 
 
@@ -218,19 +174,13 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _build_registry(
-    config: RuntimeConfig, session_ref: dict[str, str] | str
-) -> ToolRegistry:
-    """注册四个内置工具（todo 绑定 session_ref 指向的会话）。"""
+def _build_registry(memory: MemoryStore) -> ToolRegistry:
+    """注册四个内置工具（calculator / search / weather / read_memory，read_memory 绑定全局记忆）。"""
     registry = ToolRegistry()
     registry.register(CalculatorTool())
     registry.register(SearchTool())
     registry.register(WeatherTool())
-    if isinstance(session_ref, str):
-        ref = {"session_id": session_ref}
-    else:
-        ref = session_ref
-    registry.register(RebindableTodoTool(config.data_dir, ref))
+    registry.register(ReadMemoryTool(memory))
     return registry
 
 
@@ -244,6 +194,7 @@ def main(
     缺少 DEEPSEEK_API_KEY 时输出设置指引并返回 1（不发起任何 API
     调用）；正常路径返回 0。
     """
+    load_dotenv()
     args = _parse_args(argv)
     output: Writer = writer if writer is not None else _default_writer
     config = RuntimeConfig.from_env()
@@ -259,15 +210,11 @@ def main(
         return 1
 
     session_id = args.session if args.session else _generate_session_id()
-    session_ref: dict[str, str] = {"session_id": session_id}
-
-    def on_session_change(new_session_id: str) -> None:
-        session_ref["session_id"] = new_session_id
 
     sessions = SessionStore(config.data_dir)
-    memory = MemoryStore(config.data_dir, llm)
+    memory = MemoryStore(config.data_dir)
     builder = ContextBuilder(sessions, memory, config)
-    registry = _build_registry(config, session_ref)
+    registry = _build_registry(memory)
     trace = TraceCollector(JsonlExporter(config.data_dir / "traces"))
     compressor = ContextCompressor(sessions, llm, trace, config)
     middlewares: list[Middleware] = [CompactionMiddleware(compressor)]
@@ -284,7 +231,6 @@ def main(
             output,
             session_id=session_id,
             raw_writer=_default_raw_writer,
-            on_session_change=on_session_change,
         )
     finally:
         summarizer.stop()

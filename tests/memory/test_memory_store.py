@@ -1,146 +1,133 @@
-"""MemoryStore 的单元测试（本地文件存储 + 哈希去重 + LLM 合并）。"""
+"""MemoryStore（全局 MEMORY 目录存储）的单元测试 —— 对应 refactor-global-memory tasks.md Task 1 RED 条目。"""
 
-import json
+import logging
+from datetime import datetime
 from pathlib import Path
-from typing import Any
 
-from harness.llm import AIMessage
+import pytest
+
+from harness.memory import store as store_module
 from harness.memory.store import MemoryStore
 
 
-class _ScriptedLLM:
-    """按脚本内容返回 AIMessage 的假 LLM 客户端（记录收到的消息）。"""
+class _FixedDatetime(datetime):
+    """now() 固定返回 2026-09-28 14:30:05，用于确定文件名与日期断言。"""
 
-    def __init__(self, content: str = "") -> None:
-        self.content = content
-        self.messages: list[dict[str, Any]] | None = None
-
-    def invoke(
-        self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
-    ) -> AIMessage:
-        """返回预设内容并记录入参（与 LLMClient.invoke 同签名）。"""
-        self.messages = messages
-        return AIMessage(content=self.content)
-
-
-def _entries_dir(tmp_path: Path, session_id: str) -> Path:
-    """返回指定会话的条目目录路径。"""
-    return tmp_path / "memory" / session_id / "entries"
-
-
-def _index_path(tmp_path: Path, session_id: str) -> Path:
-    """返回指定会话的 MEMORY.md 路径。"""
-    return tmp_path / "memory" / session_id / "MEMORY.md"
+    @classmethod
+    def now(cls) -> datetime:
+        return cls(2026, 9, 28, 14, 30, 5)
 
 
 class TestMemoryStore:
 
-    def testWriteCreatesEntryAndIndex(self, tmp_path: Path) -> None:
-        """首次写入创建条目文件与 MEMORY.md 索引行。"""
-        store = MemoryStore(tmp_path, _ScriptedLLM())
-        assert store.write("s1", "记忆A") is True
-        entries = list(_entries_dir(tmp_path, "s1").glob("*.md"))
-        assert len(entries) == 1
-        text = entries[0].read_text(encoding="utf-8")
-        assert text.startswith("---\n")
-        assert "hash:" in text
-        assert "created:" in text
-        assert "tags:" in text
-        assert "记忆A" in text
-        index = _index_path(tmp_path, "s1").read_text(encoding="utf-8")
-        assert "记忆A" in index
-
-    def testDedupSameContent(self, tmp_path: Path) -> None:
-        """同内容（strip 规范化后）第二次写入被跳过，条目数不变。"""
-        store = MemoryStore(tmp_path, _ScriptedLLM())
-        assert store.write("s1", "记忆A") is True
-        assert store.write("s1", " 记忆A ") is False
-        assert len(list(_entries_dir(tmp_path, "s1").glob("*.md"))) == 1
-
-    def testDifferentContentWrites(self, tmp_path: Path) -> None:
-        """不同内容两次写入均成功，生成 2 个条目文件。"""
-        store = MemoryStore(tmp_path, _ScriptedLLM())
-        assert store.write("s1", "记忆A") is True
-        assert store.write("s1", "记忆B") is True
-        assert len(list(_entries_dir(tmp_path, "s1").glob("*.md"))) == 2
-
-    def testRenderSummary(self, tmp_path: Path) -> None:
-        """render_summary 渲染全部条目；无记忆的会话返回 None。"""
-        store = MemoryStore(tmp_path, _ScriptedLLM())
-        store.write("s1", "记忆A")
-        store.write("s1", "记忆B")
-        summary = store.render_summary("s1")
-        assert summary is not None
-        assert "记忆A" in summary
-        assert "记忆B" in summary
-        assert store.render_summary("s9") is None
-
-    def testMergeAppliesActions(self, tmp_path: Path) -> None:
-        """merge 按 LLM 输出的 DELETE/ADD 动作整理条目并重写索引。"""
-        fake = _ScriptedLLM()
-        store = MemoryStore(tmp_path, fake)
-        store.write("s1", "旧记忆")
-        entry_hash = store.list_entries("s1")[0]["hash"]
-        fake.content = json.dumps(
-            [
-                {"action": "DELETE", "hash": entry_hash},
-                {"action": "ADD", "content": "新记忆"},
-            ],
-            ensure_ascii=False,
+    def testAppendWritesEntryFileAndIndexLine(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """一次提取写入记忆文件（日期 + 条目）并在 MEMORY.md 追加一行索引。"""
+        monkeypatch.setattr(store_module, "datetime", _FixedDatetime)
+        store = MemoryStore(tmp_path)
+        filename = store.append(["用户偏好简洁回复", "正在开发 demo"], ["偏好", "项目"])
+        assert filename == "20260928-143005.md"
+        entry = (tmp_path / "MEMORY" / filename).read_text(encoding="utf-8")
+        assert entry.startswith("日期：2026-09-28\n\n")
+        assert "- 用户偏好简洁回复" in entry
+        assert "- 正在开发 demo" in entry
+        index = (tmp_path / "MEMORY" / "MEMORY.md").read_text(encoding="utf-8")
+        assert index == (
+            "- 20260928-143005.md｜用户偏好简洁回复（等 2 条）（tags: 偏好, 项目）\n"
         )
-        assert store.merge("s1") == 2
-        entries = store.list_entries("s1")
-        assert len(entries) == 1
-        assert entries[0]["content"] == "新记忆"
-        index = _index_path(tmp_path, "s1").read_text(encoding="utf-8")
-        assert "旧记忆" not in index
-        assert "新记忆" in index
 
-    def testMergeInvalidLLMOutputKeepsOriginal(self, tmp_path: Path) -> None:
-        """LLM 输出非法 JSON 时 merge 不抛异常、返回 -1、内容逐字节不变。"""
-        fake = _ScriptedLLM("不是JSON")
-        store = MemoryStore(tmp_path, fake)
-        store.write("s1", "记忆A")
-        before = _index_path(tmp_path, "s1").read_bytes()
-        assert store.merge("s1") == -1
-        assert _index_path(tmp_path, "s1").read_bytes() == before
-        assert len(store.list_entries("s1")) == 1
+    def testAppendBriefTruncatedAndCountSuffix(self, tmp_path: Path) -> None:
+        """索引行简述截断 60 字，多条记忆追加「等 N 条」。"""
+        store = MemoryStore(tmp_path)
+        store.append(["长" * 100, "第二条"], [])
+        index = (tmp_path / "MEMORY" / "MEMORY.md").read_text(encoding="utf-8")
+        assert ("长" * 60) in index
+        assert ("长" * 61) not in index
+        assert "（等 2 条）" in index
 
-    def testMergeUpdateDedupCountsApplied(self, tmp_path: Path) -> None:
-        """UPDATE 目标内容与现存条目重复时合并生效，不返回 -1。"""
-        fake = _ScriptedLLM()
-        store = MemoryStore(tmp_path, fake)
-        store.write("s1", "旧记忆A")
-        store.write("s1", "重复目标B")
-        target_hash = next(
-            e["hash"] for e in store.list_entries("s1") if e["content"] == "旧记忆A"
-        )
-        fake.content = json.dumps(
-            [{"action": "UPDATE", "hash": target_hash, "content": "重复目标B"}],
-            ensure_ascii=False,
-        )
-        applied = store.merge("s1")
-        assert applied >= 1
-        entries = store.list_entries("s1")
-        assert len(entries) == 1
-        assert entries[0]["content"] == "重复目标B"
+    def testAppendEmptyTagsOmitTagSection(self, tmp_path: Path) -> None:
+        """tags 为空时索引行不含 tags 段。"""
+        store = MemoryStore(tmp_path)
+        store.append(["用户养了一只猫叫团子"], [])
+        index = (tmp_path / "MEMORY" / "MEMORY.md").read_text(encoding="utf-8")
+        assert "tags:" not in index
+        assert "用户养了一只猫叫团子" in index
 
-    def testMergeShortHashRejected(self, tmp_path: Path) -> None:
-        """短于 12 位的哈希前缀被拒绝，不误删条目。"""
-        fake = _ScriptedLLM()
-        store = MemoryStore(tmp_path, fake)
-        store.write("s1", "记忆A")
-        fake.content = json.dumps(
-            [{"action": "DELETE", "hash": "a"}], ensure_ascii=False
-        )
-        assert store.merge("s1") == 0
-        assert len(store.list_entries("s1")) == 1
+    def testAppendEmptyMemoriesNoop(self, tmp_path: Path) -> None:
+        """空记忆列表不产生任何文件。"""
+        store = MemoryStore(tmp_path)
+        assert store.append([], []) is None
+        assert not (tmp_path / "MEMORY").exists()
 
-    def testWriteEmptyContentRejected(self, tmp_path: Path) -> None:
-        """空/纯空白内容被拒绝写入且不创建任何文件。"""
-        store = MemoryStore(tmp_path, _ScriptedLLM())
-        assert store.write("s1", "   ") is False
-        assert store.list_entries("s1") == []
-        assert not _entries_dir(tmp_path, "s1").exists()
+    def testAppendFilenameCollisionSuffix(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """同秒文件名冲突时追加 -2 后缀，不覆盖既有文件。"""
+        monkeypatch.setattr(store_module, "datetime", _FixedDatetime)
+        memory_dir = tmp_path / "MEMORY"
+        memory_dir.mkdir()
+        (memory_dir / "20260928-143005.md").write_text("旧内容", encoding="utf-8")
+        store = MemoryStore(tmp_path)
+        filename = store.append(["新记忆"], [])
+        assert filename == "20260928-143005-2.md"
+        assert (memory_dir / "20260928-143005.md").read_text(encoding="utf-8") == "旧内容"
+        assert "- 新记忆" in (memory_dir / filename).read_text(encoding="utf-8")
+
+    def testRenderIndexNoneWhenAbsent(self, tmp_path: Path) -> None:
+        """无 MEMORY 目录时索引为 None。"""
+        assert MemoryStore(tmp_path).render_index() is None
+
+    def testRenderIndexReturnsIndexLines(self, tmp_path: Path) -> None:
+        """索引按追加序返回全部索引行。"""
+        store = MemoryStore(tmp_path)
+        first = store.append(["第一条记忆"], [])
+        second = store.append(["第二条记忆"], [])
+        index = store.render_index()
+        assert index is not None
+        assert index.splitlines() == [
+            f"- {first}｜第一条记忆",
+            f"- {second}｜第二条记忆",
+        ]
+
+    def testReadEntryContent(self, tmp_path: Path) -> None:
+        """read 返回记忆文件全文（含日期行）。"""
+        store = MemoryStore(tmp_path)
+        filename = store.append(["用户偏好简洁回复"], [])
+        content = store.read(filename)
+        assert content is not None
+        assert content.startswith("日期：")
+        assert "- 用户偏好简洁回复" in content
+
+    def testReadMissingReturnsNone(self, tmp_path: Path) -> None:
+        """read 不存在的文件返回 None。"""
+        assert MemoryStore(tmp_path).read("nonexistent.md") is None
+
+    def testSummarizedOrdinalDefaultsAndPersists(self, tmp_path: Path) -> None:
+        """提取进度缺省 -1，写入后新实例可读回（持久化）。"""
+        store = MemoryStore(tmp_path)
+        assert store.summarized_ordinal("s1") == -1
+        store.mark_summarized("s1", 5)
+        assert MemoryStore(tmp_path).summarized_ordinal("s1") == 5
+
+    def testCorruptStateTreatedAsEmpty(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """state.json 损坏（非法 JSON / 非对象）时告警并按空进度处理，不抛异常。"""
+        memory_dir = tmp_path / "MEMORY"
+        memory_dir.mkdir()
+        (memory_dir / "state.json").write_text("不是 JSON", encoding="utf-8")
+        with caplog.at_level(logging.WARNING):
+            assert MemoryStore(tmp_path).summarized_ordinal("s1") == -1
+        assert "state.json" in caplog.text
+        (memory_dir / "state.json").write_text("[1, 2]", encoding="utf-8")
+        with caplog.at_level(logging.WARNING):
+            assert MemoryStore(tmp_path).summarized_ordinal("s2") == -1
+        assert caplog.text.count("state.json") >= 2
+
+    def testRenderIndexEmptyFileReturnsNone(self, tmp_path: Path) -> None:
+        """空白 MEMORY.md 视为无记忆（返回 None）。"""
+        memory_dir = tmp_path / "MEMORY"
+        memory_dir.mkdir()
+        (memory_dir / "MEMORY.md").write_text("  \n", encoding="utf-8")
+        assert MemoryStore(tmp_path).render_index() is None

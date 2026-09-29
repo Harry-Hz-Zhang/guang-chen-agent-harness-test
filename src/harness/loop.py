@@ -4,16 +4,14 @@
 落库，随后按 design 决策 1 的数据流逐轮执行——middleware.before_model
 （压缩等会话级前置处理）→ ContextBuilder 重建上下文 → LLM 调用（含
 trace span）→ assistant 消息落库（保留 reasoning_content 与 tool_calls）
-→ parse_response 二分：最终答案即返回；工具调用批次则逐个校验、经
-middleware.wrap_tool_call 执行（超时受控）、结果或结构化错误以 tool
-消息落库后进入下一轮。达到 max_rounds 仍未收敛则返回截断提示。
+→ parse_response 二分：最终答案即返回；工具调用批次则逐个校验、直接
+执行、结果或结构化错误以 tool 消息落库后进入下一轮。达到 max_rounds
+仍未收敛则返回截断提示。
 """
 
 from __future__ import annotations
 
-import functools
 import json
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Callable, Iterator
 
@@ -175,13 +173,11 @@ class ReactLoop:
         trace_id: str,
         parent_span_id: str,
     ) -> None:
-        """处理单个工具调用：查找 → 校验 → 执行（middleware 链 + 超时）→ 落库。
+        """处理单个工具调用：查找 → 校验 → 执行 → 落库。
 
-        三类失败（未注册 / 参数非法 / 执行异常或超时）均以结构化错误
-        JSON 回传 LLM，不静默吞（D23 契约）。注意：Python 3.11+
-        concurrent.futures.TimeoutError 与内置 TimeoutError 同名，
-        工具自身抛 TimeoutError 也会被归类为 ToolTimeoutError——仍
-        结构化回传且主循环不中断，语义可接受。
+        三类失败（未注册 / 参数非法 / 执行异常）均以结构化错误
+        JSON 回传 LLM，不静默吞（D23 契约）。工具自身抛出的
+        TimeoutError 等一切异常统一归类 ToolExecutionError。
         """
         try:
             tool = self._registry.get(call.name)
@@ -210,43 +206,11 @@ class ReactLoop:
         result: str | None = None
         error: dict[str, Any] | None = None
         try:
-            result = self._execute_through_middlewares(call, tool)
-        except TimeoutError:
-            error = self._error_payload(
-                call,
-                "ToolTimeoutError",
-                f"工具执行超时（超过 {self._config.tool_timeout_seconds} 秒）",
-            )
+            result = tool.execute(**(call.args or {}))
         except Exception as exc:
             error = self._error_payload(call, "ToolExecutionError", str(exc))
         self._trace.end_tool_span(tool_span_id, result, error)
         self._append_tool_message(session_id, call, result, error)
-
-    def _execute_through_middlewares(self, call: ToolCall, tool: Any) -> str:
-        """经 middleware 链包裹后执行工具（内层带超时控制）。"""
-
-        def base_execute(inner_call: ToolCall) -> str:
-            return self._execute_with_timeout(tool, inner_call)
-
-        handler: Callable[[ToolCall], str] = base_execute
-        for middleware in reversed(self._middlewares):
-            handler = functools.partial(middleware.wrap_tool_call, execute=handler)
-        return handler(call)
-
-    def _execute_with_timeout(self, tool: Any, call: ToolCall) -> str:
-        """在线程池中执行工具并施加超时；超时后不等待工作线程退出。
-
-        Python 线程无法被强杀，超时后工具线程可能仍在后台运行直至
-        自然结束——单用户 CLI 场景可接受（executor 不阻塞主流程）。
-        极端情况（工具死循环永不返回）下，线程池工作线程经
-        threading 的 atexit 钩子在进程退出时被 join，可能延迟退出。
-        """
-        executor = ThreadPoolExecutor(max_workers=1)
-        try:
-            future = executor.submit(tool.execute, **(call.args or {}))
-            return future.result(timeout=self._config.tool_timeout_seconds)
-        finally:
-            executor.shutdown(wait=False, cancel_futures=True)
 
     def _error_payload(
         self, call: ToolCall, error_type: str, message: str
