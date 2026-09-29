@@ -1,0 +1,55 @@
+# Tasks — 单进程多会话并发执行（ConcurrentRunner + CLI --concurrent）
+
+- [x] Task 1: 新增 runner.py（SessionJob / JobResult / ConcurrentRunner），测试先行
+  - complexity: 🟡
+  - files: Create `src/harness/runner.py`、`tests/test_runner.py`；Modify `src/harness/__init__.py`（如需导出）、`src/harness/config.py`（max_concurrent_sessions）
+  - RED:
+    - 先写 `tests/test_runner.py`：ThreadSafeFakeLLM 辅助（锁保护 calls/responses + 并发峰值计数）与 TestRunner 10 用例（design.md §6.1）
+    - `uv run pytest tests/test_runner.py -q` → 失败（ImportError：harness.runner 不存在）
+  - GREEN:
+    - 新建 `src/harness/runner.py`（design.md §2，≤ 130 行）；`config.py` 加 `max_concurrent_sessions: int = 4` 并注册 env 覆盖
+    - `uv run pytest tests/test_runner.py -q`（全部转绿）
+  - ASSERT:
+    - `wc -l`：runner.py ≤ 130
+    - `grep -n "print\|open(" src/harness/runner.py` 零命中
+    - 全函数类型注解 + 中文 docstring；校验失败抛 ValueError 且消息中文
+    - `HARNESS_MAX_CONCURRENT_SESSIONS=9 PYTHONPATH=src uv run python -c "from harness.config import RuntimeConfig; assert RuntimeConfig.from_env().max_concurrent_sessions == 9"`
+  - DoD:
+    - 真并发（峰值 ≥ 2）、批内隔离（session 文件 / todos）、单任务失败不倒批、重复与空值拒绝、并发上限受配置约束，全部由测试固化
+  - 最小验证: `uv run pytest tests/test_runner.py -q`
+  - commit: `feat: 新增 ConcurrentRunner 线程池并发执行多会话任务`
+
+- [x] Task 2: CLI --concurrent 接线（解析 / 互斥 / 渲染），测试先行
+  - complexity: 🟡
+  - files: Modify `src/harness/__main__.py`、`tests/test_cli.py`
+  - RED:
+    - `tests/test_cli.py` 新增 TestConcurrentCli 4 用例（design.md §6.2：spec 解析、成功渲染、失败渲染、--session 互斥）
+    - `uv run pytest tests/test_cli.py -q` → 4 项失败（无 --concurrent 参数、无 _parse_concurrent_specs / run_concurrent）
+  - GREEN:
+    - `__main__.py`：argparse 加 `--concurrent SESSION:输入 [SESSION:输入 ...]`；`_parse_concurrent_specs`（首个冒号切分 + 空值拒绝）；互斥校验先于 LLMClient 构造（同给 → 提示 + 退出码 2）；`run_concurrent(runner, jobs, writer)` 渲染（会话头 + 答案 / 出错了 + 汇总行）；main 分支装配 ConcurrentRunner 执行后返回 0（design.md §4）
+    - `uv run pytest tests/test_cli.py -q`（全部转绿）
+  - ASSERT:
+    - `uv run pytest` 全绿（189 → 约 203 项）
+    - `PYTHONPATH=src uv run python -m harness --concurrent s1:你好 s1:再次 --session s1` 之类组合不误入 REPL（互斥/重复路径有明确提示与非 0 码）
+    - `PYTHONPATH=src uv run python -m harness --help` 输出含 --concurrent 说明
+  - DoD:
+    - `--concurrent s1:输入A s2:输入B` 一条命令并发跑两会话、按序输出结果与汇总后退出；格式与互斥错误提示可读
+  - 最小验证: `uv run pytest tests/test_cli.py -q && uv run pytest`
+  - commit: `feat: CLI 新增 --concurrent 并发批量执行多个会话`
+
+- [x] Task 3: 文档同步与全量验证
+  - complexity: 🟢
+  - files: Modify `README.md`、`CODEGRAPH.md`、`AGENTS.md`
+  - RED: 无（纯文档；不新增测试）
+  - GREEN:
+    - README 功能列表加一条「单进程多会话并发（--concurrent，线程池）」
+    - CODEGRAPH.md 模块表补 runner.py 行（ConcurrentRunner 与 loop/config 的关系）
+    - AGENTS.md 目录树 src/harness/ 下补 `runner.py` 行
+  - ASSERT:
+    - `uv run pytest` 全绿
+    - `codegraph sync` 成功
+    - 三处文档均含 runner.py / --concurrent 述及（grep 可验）
+  - DoD:
+    - 文档与实现一致；索引同步完成
+  - 最小验证: `uv run pytest && codegraph sync`
+  - commit: `docs: 同步多会话并发能力的文档与代码图谱`
