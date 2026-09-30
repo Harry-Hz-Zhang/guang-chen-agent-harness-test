@@ -86,10 +86,29 @@ class ReactLoop:
         session_id: str,
         on_event: Callable[[StreamEvent], None] | None = None,
     ) -> LoopResult:
-        """决策循环主体（run 已完成会话上下文绑定）。"""
+        """决策循环主体（run 已完成会话上下文绑定）。
+
+        trace 登记在 finally 里收尾：正常答案、截断与异常路径都经
+        end_trace 清理内存登记表（reverse-sync ⑥，落盘文件不受影响）。
+        """
         trace_id = self._trace.start_trace(session_id)
+        try:
+            return self._run_turns(user_input, session_id, on_event, trace_id)
+        finally:
+            self._trace.end_trace(trace_id)
+
+    def _run_turns(
+        self,
+        user_input: str,
+        session_id: str,
+        on_event: Callable[[StreamEvent], None] | None,
+        trace_id: str,
+    ) -> LoopResult:
+        """逐轮决策循环体（trace 生命周期由 _run 统一管理）。"""
         tools_schema = self._registry.to_openai_tools()
-        tools_param: list[dict[str, Any]] | None = tools_schema if tools_schema else None
+        tools_param: list[dict[str, Any]] | None = (
+            tools_schema if tools_schema else None
+        )
         rounds = 0
         tool_call_count = 0
         carried: list[dict[str, Any]] = []
@@ -112,14 +131,10 @@ class ReactLoop:
                 )
             state.messages = request
             carried = request
-            span_id = self._trace.start_llm_span(
-                trace_id, self._config.model, request
-            )
+            span_id = self._trace.start_llm_span(trace_id, self._config.model, request)
             message = self._call_llm(request, tools_param, on_event)
             rounds += 1
-            self._sessions.append_message(
-                session_id, self._assistant_record(message)
-            )
+            self._sessions.append_message(session_id, self._assistant_record(message))
             usage = message.usage if message.usage is not None else Usage(0, 0, 0)
             self._trace.end_llm_span(
                 span_id, {"content": message.content}, usage, message.finish_reason
@@ -218,9 +233,7 @@ class ReactLoop:
                 ),
             )
             return
-        tool_span_id = self._trace.start_tool_span(
-            trace_id, parent_span_id, call
-        )
+        tool_span_id = self._trace.start_tool_span(trace_id, parent_span_id, call)
         result: str | None = None
         error: dict[str, Any] | None = None
         try:

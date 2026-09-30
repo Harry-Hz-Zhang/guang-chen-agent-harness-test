@@ -149,16 +149,35 @@ class TraceCollector:
     """
 
     def __init__(self, exporter: TraceExporter) -> None:
-        """注入导出器并初始化 trace 与 span 的内存索引。"""
+        """注入导出器并初始化 trace 与 span 的内存索引（含并发锁）。"""
         self._exporter = exporter
         self._trace_sessions: dict[str, str] = {}
         self._spans: dict[str, _LlmSpanMeta | _ToolSpanMeta] = {}
+        self._lock = threading.Lock()
 
     def start_trace(self, session_id: str) -> str:
         """生成新 trace_id（32 位小写 hex）并记录其与会话的映射，不发事件。"""
         trace_id = secrets.token_hex(_TRACE_ID_BYTES)
-        self._trace_sessions[trace_id] = session_id
+        with self._lock:
+            self._trace_sessions[trace_id] = session_id
         return trace_id
+
+    def end_trace(self, trace_id: str) -> None:
+        """回合终局清理：从登记表移除该 trace 及其残留 span（幂等）。
+
+        span 通常已在 end_*_span 被收尾，这里兜住异常路径的残留；不存在的
+        trace_id 静默返回（重复调用无害）。落盘文件不受影响（导出已在
+        end_*_span 时发生）。
+        """
+        with self._lock:
+            self._trace_sessions.pop(trace_id, None)
+            stale = [
+                span_id
+                for span_id, span in self._spans.items()
+                if span.trace_id == trace_id
+            ]
+            for span_id in stale:
+                del self._spans[span_id]
 
     def start_llm_span(
         self,
@@ -173,15 +192,20 @@ class TraceCollector:
         attributes["harness.span.kind"]。
         """
         span_id = secrets.token_hex(_SPAN_ID_BYTES)
-        self._spans[span_id] = _LlmSpanMeta(
-            span_id=span_id,
-            trace_id=trace_id,
-            session_id=self._trace_sessions.get(trace_id, FALLBACK_CONVERSATION_ID),
-            model=model,
-            messages=messages,
-            span_kind=kind,
-            start_time=_utc_now(),
-        )
+        with self._lock:
+            session_id_resolved = self._trace_sessions.get(
+                trace_id, FALLBACK_CONVERSATION_ID
+            )
+            meta = _LlmSpanMeta(
+                span_id=span_id,
+                trace_id=trace_id,
+                session_id=session_id_resolved,
+                model=model,
+                messages=messages,
+                span_kind=kind,
+                start_time=_utc_now(),
+            )
+            self._spans[span_id] = meta
         return span_id
 
     def end_llm_span(
@@ -193,7 +217,8 @@ class TraceCollector:
         error: dict[str, Any] | None = None,
     ) -> None:
         """结束 LLM span 并发出 type=="llm" 事件（含用量与截断后的正文）。"""
-        span = self._spans.pop(span_id, None)
+        with self._lock:
+            span = self._spans.pop(span_id, None)
         if not isinstance(span, _LlmSpanMeta):
             logger.warning("end_llm_span 收到未知 span_id：%s（事件被丢弃）", span_id)
             return
@@ -231,16 +256,21 @@ class TraceCollector:
     ) -> str:
         """生成以所属 LLM span 为父的工具 span，记录元数据待 end 时发事件。"""
         span_id = secrets.token_hex(_SPAN_ID_BYTES)
-        self._spans[span_id] = _ToolSpanMeta(
-            span_id=span_id,
-            trace_id=trace_id,
-            session_id=self._trace_sessions.get(trace_id, FALLBACK_CONVERSATION_ID),
-            parent_span_id=parent_span_id,
-            tool_name=call.name,
-            tool_call_id=call.id,
-            arguments_raw=call.arguments_raw,
-            start_time=_utc_now(),
-        )
+        with self._lock:
+            session_id_resolved = self._trace_sessions.get(
+                trace_id, FALLBACK_CONVERSATION_ID
+            )
+            meta = _ToolSpanMeta(
+                span_id=span_id,
+                trace_id=trace_id,
+                session_id=session_id_resolved,
+                parent_span_id=parent_span_id,
+                tool_name=call.name,
+                tool_call_id=call.id,
+                arguments_raw=call.arguments_raw,
+                start_time=_utc_now(),
+            )
+            self._spans[span_id] = meta
         return span_id
 
     def end_tool_span(
@@ -250,7 +280,8 @@ class TraceCollector:
         error: dict[str, Any] | None = None,
     ) -> None:
         """结束工具 span 并发出 type=="tool" 事件（result 为 None 时记 null）。"""
-        span = self._spans.pop(span_id, None)
+        with self._lock:
+            span = self._spans.pop(span_id, None)
         if not isinstance(span, _ToolSpanMeta):
             logger.warning("end_tool_span 收到未知 span_id：%s（事件被丢弃）", span_id)
             return

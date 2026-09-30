@@ -136,9 +136,7 @@ class MemorySummarizer:
             return False
         return (time.time() - last_modified) >= self._config.idle_seconds
 
-    def _new_messages(
-        self, session_id: str
-    ) -> tuple[list[dict[str, Any]], int]:
+    def _new_messages(self, session_id: str) -> tuple[list[dict[str, Any]], int]:
         """返回该会话进度之后的消息列表与它们覆盖到的最大 ordinal。"""
         last = self._memory.summarized_ordinal(session_id)
         messages: list[dict[str, Any]] = []
@@ -164,27 +162,31 @@ class MemorySummarizer:
         prompt = MEMORY_EXTRACT_PROMPT + _render_messages(messages)
         request: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
         trace_id = self._trace.start_trace(session_id)
-        span_id = self._trace.start_llm_span(
-            trace_id, self._config.model, request, kind="idle_summary"
-        )
         try:
-            message = self._llm.invoke(request)
-        except Exception as exc:
+            span_id = self._trace.start_llm_span(
+                trace_id, self._config.model, request, kind="idle_summary"
+            )
+            try:
+                message = self._llm.invoke(request)
+            except Exception as exc:
+                self._trace.end_llm_span(
+                    span_id,
+                    {"content": ""},
+                    Usage(prompt_tokens=0, completion_tokens=0, total_tokens=0),
+                    "",
+                    error={"error.type": type(exc).__name__, "message": str(exc)},
+                )
+                raise
+            usage = getattr(message, "usage", None)
+            if usage is None:
+                usage = Usage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
             self._trace.end_llm_span(
                 span_id,
-                {"content": ""},
-                Usage(prompt_tokens=0, completion_tokens=0, total_tokens=0),
-                "",
-                error={"error.type": type(exc).__name__, "message": str(exc)},
+                {"content": str(getattr(message, "content", "") or "")},
+                usage,
+                str(getattr(message, "finish_reason", "") or ""),
             )
-            raise
-        usage = getattr(message, "usage", None)
-        if usage is None:
-            usage = Usage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
-        self._trace.end_llm_span(
-            span_id,
-            {"content": str(getattr(message, "content", "") or "")},
-            usage,
-            str(getattr(message, "finish_reason", "") or ""),
-        )
-        return str(getattr(message, "content", "") or "")
+            return str(getattr(message, "content", "") or "")
+        finally:
+            # 回合终局清理（对称 loop._run reverse-sync ⑥）：闲置提取路径同样不泄漏登记表
+            self._trace.end_trace(trace_id)

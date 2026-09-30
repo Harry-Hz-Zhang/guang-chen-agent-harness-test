@@ -1,40 +1,10 @@
 # Agent Runtime 架构问答
 
-> 状态：**待审核**（初稿简答，审核后展开/修订）
-> 回答基于本仓库 harness runtime 的真实实现，涉及代码处均标注模块定位，便于逐条核对。
-> 每题先给简答；标注 ⚠ 的是当前实现尚未覆盖、需要补设计的能力缺口。
-
----
 
 ## 模块一：Context / Performance
 
-### 1.1 首轮长窗口/多模态输入 first token 慢（5-10s → 2s）
-
-**问题**：大模型面对第一轮长窗口或多模态输入时，first token 会显著变慢。有什么快速/低成本/用户体验也不差的方案？从 5-10 秒稳定压缩到 2 秒。
-
-**简答**：
-
-TTFT 慢的根因是服务端要对全部输入做 prefill。三个方向，按性价比排序：
-
-1. **让输入变小**（最直接）
-   - 工具结果截断：`ContextBuilder` 对超长 tool 消息截断到 `tool_result_max_chars=2000`，附「全文见会话记录」尾注（[builder.py](../src/harness/context/builder.py)）；
-   - 索引化分层加载：记忆只注入 `MEMORY.md` 索引（每条一行：文件名＋简述＋tags），正文由 LLM 用 `read_memory` 工具按需读取——首轮只带索引不带全文；
-   - 多模态：图片降采样/缩略图进上下文，原图按需再取。
-2. **让 prefill 不重复发生**（成本最低）
-   - 把稳定前缀（system ＋ 工具 schema ＋ 历史摘要）放在变化内容之前，命中服务端 prefix cache（DeepSeek 有磁盘 context caching，命中部分计费更低且更快）。本项目 `ContextBuilder` 固定顺序 system → 摘要 → 历史 → 当前输入，天然符合「前缀稳定」原则；
-   - 会话续接场景下，append-only 历史正是前缀缓存的最优形态：上一轮已 prefill 的部分直接复用。
-3. **让等待可感知**（体验兜底）
-   - 流式输出＋思考通道先渲染：本项目 renderer 把 `reasoning_content` 与正文分通道，TTFT 期间用户先看到思考在流，感知延迟远低于实际延迟。
-
-结论：纯工程手段（截断＋分层＋前缀缓存＋流式）通常即可把 5-10s 压到 2s 量级，不必换模型；多模态大输入优先「缩略图＋按需取原图」。
 
 ### 1.2 session 聊了 200 轮 context 快爆，怎么做压缩？如何保证压缩后仍流畅？
-
-**问题**：一个 session 连续聊了 200 轮，context 快爆了。你会怎么做压缩？如何确保压缩后的对话仍然流畅？
-
-**简答**：
-
-本项目已实现一套（[compressor.py](../src/harness/context/compressor.py)），核心设计：
 
 - **触发**：双阈值（`compact_rounds=60` 轮 或 估算 token 达 `compact_tokens=100_000`），且按「未压缩窗口」计数——已压缩区间不计入，压缩后计数回落，不会每轮重复触发；
 - **保留近期原文**：保留最近 `keep_recent_rounds=5` 轮逐字原文，只压更早历史——近期细节（用户刚说的约束、刚出的结果）不丢，这是「流畅」的第一保障；
@@ -70,29 +40,6 @@ TTFT 慢的根因是服务端要对全部输入做 prefill。三个方向，按�
 - **去重与冲突消解**：本项目刻意「只追加、不去重、不合并」（demo 决策，[store.py](../src/harness/memory/store.py)），生产必须做记忆合并与失效标记——否则半个月后同一问题会召回多条互相矛盾的记忆；
 - **注入位置**：召回结果作为带来源与日期标记的独立段注入 system，不伪装成对话历史。
 
-### 2.2 Agent memory 经典框架、发展趋势、头部玩家
-
-**问题**：你理解的 Agent memory 经典框架是什么？它的发展趋势是什么，最头部的玩家在怎么做？
-
-**简答**：
-
-**经典分层**（学界共识）：
-
-- 短期记忆 ＝ 对话上下文（working memory）——本项目对应 session JSONL＋压缩窗口；
-- 长期记忆三分：**语义记忆**（事实/知识）、**情景记忆**（发生过什么）、**程序记忆**（怎么做/技能）；
-- 两个奠基工作：Stanford **Generative Agents**（memory stream ＋ recency/importance/relevance 三因子检索 ＋ reflection）、**MemGPT**（OS 分页隐喻：主上下文放不下的记忆由模型自己换页、自编辑）。
-
-**趋势**：从「外挂向量库 RAG」走向 **agentic memory**——记忆不再是检索管道，而是模型用工具自己读写维护的文件/结构（可审计、可编辑）；在此之上叠加 context engineering（常驻索引＋按需详情的分层，正是本项目的形态）。
-
-**头部玩家**：
-
-- **OpenAI ChatGPT memory**：产品化持久记忆，用户可见、可管理，跨会话生效；
-- **Anthropic Claude**：memory tool ＋ CLAUDE.md/auto memory——文件式记忆由 agent 自维护（Claude Code 的目录式记忆），与本项目的「md 文件＋read_memory 工具」同构；
-- **Letta**（MemGPT 团队商业化）：分层记忆 OS；
-- **Mem0** 等：可插拔记忆中间件。
-
-本项目差距：写入侧只有「闲置后台提取」一条路径，没有 agentic 写入（模型主动记/改/删记忆的工具）。
-
 ---
 
 ## 模块三：Task
@@ -112,21 +59,6 @@ TTFT 慢的根因是服务端要对全部输入做 prefill。三个方向，按�
 
 实践上组合使用：外层拆任务＋子上下文内目标重申＋摘要接力兜底。
 
-### 3.2 每天早 9 点根据昨天聊天做复盘总结，怎么设计？
-
-**问题**：用户给 Agent 下达任务：每天早上 9 点根据昨天聊天情况做复盘总结。你会怎么设计？
-
-**简答**：
-
-直接复用 `MemorySummarizer` 的既有模式（daemon 线程周期扫描＋state 记录防重，[summarizer.py](../src/harness/memory/summarizer.py)）：
-
-1. **调度**：daemon 线程周期检查（或系统 cron 拉起 CLI 子命令）：「已过 9 点 且 今日未执行」则触发；
-2. **数据**：从 `SessionStore` 过滤昨天的消息。⚠ 现状缺口：会话 JSONL 记录只有 ordinal 没有 timestamp 字段，按日过滤只能靠文件 mtime 近似——需先给 `append_message` 补时间戳字段（append-only 兼容：旧行无时间戳时回退 mtime）；
-3. **执行**：渲染昨日消息 → 复盘提示词 → LLM 生成（挂独立 trace，`kind="daily_review"`，与 `idle_summary` 同模式）；
-4. **交付**：结果写入 `data/reports/` 或追加进 memory，用户下次打开会话时注入通知；
-5. **幂等与容错**：执行记录写 state（日期→done），失败不推进进度、下轮自然重试（与记忆提取同一策略）；后台任务失败绝不影响主 REPL。
-
----
 
 ## 模块四：Tool / Session Runtime
 
@@ -176,29 +108,3 @@ TTFT 慢的根因是服务端要对全部输入做 prefill。三个方向，按�
 
 - OpenAI 式：生态最广、参数是 JSON 可强校验（本项目 `validate_arguments` 按 Schema 校验必填/未知字段）；缺点是 arguments 为字符串（非法 JSON 需兜底——本项目 args=None 保留原文回传纠错）、配对约束强（拆散即 API 报错，压缩切点保护专门处理）、长文本结果要过字符串转义；
 - Claude 式：`tool_result` 是原生内容块，长输出（bash 日志等）直接放不受转义折磨，标记风格对模型更「原生」（训练分布友好）、人类可读性好、软控制灵活；缺点是格式约束弱于 Schema 校验、更依赖模型自觉、协议绑定单一厂商。
-
-### 5.2 OpenHands 状态机设计的优缺？更优雅的实现方式？
-
-**问题**：OpenHands 的状态机设计有什么优缺？更优雅的实现方式是怎么样的？
-
-**简答**：
-
-OpenHands 的核心是**事件流（EventStream）＋ AgentController 状态机**：所有动作/观察都是事件（持久化、可重放），controller 管理任务生命周期状态（初始化/运行/暂停/错误/完成），执行面隔离在 runtime 沙箱。
-
-**优点**：
-
-- 生命周期显式化：busy/打断/错误恢复都是明确的状态转换，可审计；
-- 事件溯源：agent 崩溃可从事件流重放恢复，长任务不丢进度；
-- 控制面（controller）与执行面（runtime 沙箱）解耦。
-
-**缺点**：
-
-- 状态×事件组合爆炸，转换逻辑分散、维护成本高；
-- LLM 驱动的行为本质是非线性、不可枚举的，硬状态机管得住生命周期、管不住「智能」，存在阻抗失配；
-- 新增事件类型/状态要动多处，扩展不轻。
-
-**更优雅的方向**：
-
-1. **事件溯源＋reducer**：状态不是转移表，而是 `state = f(events)` 的折叠结果（单一 reduce 函数收敛全部转换逻辑）；
-2. **极简核心循环＋中间件**：生命周期压缩到最小状态集（idle/busy），横切关注点（压缩、日志、拦截）做成钩子——本项目 [middleware.py](../src/harness/middleware.py)（`before_model`/`after_model`）就是这条路线的最小实现，`CompactionMiddleware` 挂钩不侵入主循环；
-3. **分层状态机**：会话生命周期（runtime 管）与 agent 决策循环（协议管：`FinalAnswer`/`ToolCallBatch` 二分，[parser.py](../src/harness/parser.py)）分离，不混在一台机器里。

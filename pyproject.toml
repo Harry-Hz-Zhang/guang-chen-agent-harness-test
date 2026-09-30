@@ -22,3 +22,4 @@ package = false
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-q"
+python_functions = ["test*", "should*"]

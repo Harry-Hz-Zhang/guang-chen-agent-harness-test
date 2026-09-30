@@ -1,83 +1,172 @@
-# Exploration Handoff — 从零实现最小可用 Agent Runtime
+# 探索 Handoff —— 后台会话并行 REPL（切走继续跑，切来即对话）
 
-> 生成于 2026-09-24，VSDD explore 阶段产物。
-> 主题：按 doc/PRD.md（冻结需求）+ doc/my-plan.md（用户草稿）从零实现最小可用 Agent Runtime，不依赖任何 agent 框架。
-> 决策树 44 节点已全部 resolve，无客观阻塞，可进入 propose。
+> 生成于 2026-09-29，VSDD explore 阶段产物。
+> 主题：会话 A 运行中切换到会话 B，A 继续在后台跑完；B 立即可对话。
+> 前置 handoff（build-minimal-agent-runtime，2026-09-24）已消费，其 change 已实现；本文件为最新真源。
+> **本方案未经你审核前不写任何代码。**
 
-## 决策清单
+---
 
-### 战略与范围
+# Part 1 · 人话讲方案（给你看的部分）
+
+「我跑一个回话的时候，我切换到另一个 session，这个 session 还会继续跑，这样的功能。然后另一个 session 中我也可以和大模型进行对话」
+
+## 1. 目标到底是什么
+
+翻译成四句验收口径：
+
+1. 会话 A 正在回答（大模型还在跑），你输入切换命令 → **A 不停**，继续在后台跑；
+2. 切到会话 B 后**立刻能打字**，不等 A 跑完；
+3. A 的回答边生成边出现在**同一个终端**里，带标记让你分清哪句是 A 的、哪句是 B 的；
+4. 你若切回还没跑完的 A 又发了新问题 → 新问题**排在 A 当前这条后面**，不插队、不并行。
+
+## 2. 现在为什么做不到
+
+「读一行你的输入 → 大模型跑完这一整轮 → 才读下一行」
+
+现在的程序就像**一个营业员既当收银又当后厨**：你点完单必须站在柜台等菜出来，下一个人才能点单。你切去「另一个柜台」（另一个会话）的前提是这单做完——所以一切换就等于「这单扔了」。
+
+做不到的根子在**壳**（交互循环）不在**芯**（引擎）。芯这部分的家底我逐一查过了，见第 6 节。
+
+## 3. 参考对象怎么做的
+
+**Codex（读了公开源码）**：每个会话都是一个**常驻收发循环**——循环里永远只做一件事：「从自己专属的信箱拿下一张单子 → 处理完 → 再拿下一张」。你的输入从不直接调模型，而是**投进信箱**；会话忙就排队，闲了才开新回合；前台界面随便切视图，切走这个动作**完全不碰**后台会话的循环。
+
+**Claude Code（闭源读不了源码）**：行为对照——多会话并存、切走继续跑、回来接着看，与 Codex 同型。既然它没有代码可读，本案以 Codex 的形状为准。
+
+我们的最小实现就是把 Codex 这套换成 Python 的两个土办法：**信箱 = 队列，常驻循环 = 后台线程**。
+
+## 4. 方案骨架：只改三件事
+
+### 4.1 主线程只当「收银员」
+
+主线程从原来的「读输入 → 亲自跑模型」改成**只读键盘、只分拣**：
+
+- 是命令（/exit /new /switch /sessions /history）→ 当场处理；
+- 是普通消息 → **投进「当前会话」的信箱**，立刻回去读下一行键盘。
+
+### 4.2 每个会话一个「专属工人 + 专属信箱」
+
+第一次跟某个会话说话时，给它雇一个终身工人（后台线程）。工人的一生就是死循环：
+
+> 拿信箱里下一张单子 → 跑完这一整轮（含流式输出）→ 回来再拿。
+
+**同一个会话永远只有一个工人**，这天然保证「同一会话内部排队不并行」——这正好是现有存储层的天生要求（它不允许同一会话两边同时写，写了会乱序）。
+
+切换会话（/switch）只是改了「新消息投给哪个信箱」这一个指针变量，**不碰、不停任何已在跑的工人**。这就是「切走继续跑」的全部秘密。
+
+```
+                  ┌─────────────────┐
+   键盘输入 ────▶ │  主线程(收银员)  │──命令──▶ 当场处理
+                  └────────┬────────┘
+                           │ 普通消息投入「当前会话」的信箱
+              ┌────────────┼────────────┐
+              ▼            ▼            ▼
+        [会话A的信箱]  [会话B的信箱]   （最多 4 个活跃工人，
+              │            │             与现有并发上限同值）
+              ▼            ▼
+        会话A的工人    会话B的工人      ← 工人各跑各的，互不等待
+              │            │
+              └────┬───────┘
+                   ▼
+          终端（一把全局输出锁把关 + 会话短标记前缀）
+```
+
+### 4.3 终端输出「一把锁 + 一块胸牌」
+
+两个工人可能同时往终端吐字，不加管制会两行字粘成乱码。所以：
+
+- 所有输出（包括流式的半个字碎片）都要**经过同一把锁**才能落屏；
+- 非当前会话的输出每行带**会话胸牌**（短 id 标记），你在会话 B 里一眼能认出这行是 A 插进来的。
+
+### 4.4 闲置会话的「回锅」（对应 Codex 的收尾料理）
+
+工人在两单之间会看一眼：会话最近有没有被闲置总结过（也就是后台总结线程往这个会话的文件里补过「总结记录」）。补过就往模型准备的那份材料前面**塞一份简短提醒**（「这是之前闲置会话的总结，供参考」），让长间隔回来的会话不丢上下文。这是 Codex「回合结束收割待料理输入」的对位做法，用「看一眼文件尾部」这个最便宜的土办法实现。
+
+## 5. 一次典型踩点（A 跑着，切到 B 说话）
+
+1. 你在会话 A 问了个要跑很久的问题 → 工人 A 开跑、边跑边吐字（此刻它是「前台」身份，不带胸牌）；
+2. 你输入切换到 B → 屏幕确认已切到 B；**工人 A 依然在跑**，只是它的后续输出从此带 A 的胸牌；
+3. 你在 B 打字提问 → 消息投进信箱 B，工人 B 立刻开工，你不用等 A；
+4. 此刻终端上 A、B 的输出轮流出现，各行带各自胸牌，不会粘字；
+5. A 跑完 → 提示一句「A 已空闲」（胸牌标明是 A 的）；
+6. 你切回 A 提新问题 → 正常排队投递（若工人 A 手上还有没跑完的单子，先排它后面）。
+
+## 6. 为什么改动比听起来小（已查实的家底）
+
+把现有代码逐个组件过了一遍线程安全，结论是**芯完全不用动**：
+
+- **引擎**：一次「跑一轮」需要的所有临时状态都在函数内部，实例上没有任何会被改写的字段——多个工人共享同一个引擎实例是安全的（现有并发批量跑就是这么用的，且有并发测试背书）。
+- **会话存储**：不同会话各写各的文件，天然互不干扰；唯一禁区「同一会话并发写」恰好被「每会话单工人」满足。
+- **模型客户端**：底层 SDK 一个客户端多线程共用是官方保证的，现有闲置总结线程也已在这么用。
+- **考古发现**：现有代码里已经有**两个线程先例**——闲置总结线程（起/停模板可直接抄：后台线程 + 停止开关 + 收尾等待）和并发批量跑（组件共享边界已被验证）。本项目其实不是从零上多线程，是从「两个线程」走到「N 个工人」。
+- **切换命令已经存在**：`/switch` 上一个 change 已经做好（校验存在性、消息数提示）。本案只是在它之上补一句「切换不隐含等待」。
+
+顺手要加固的两个小点（不加固也能跑，但长跑有隐患）：
+
+- **记录轨迹的内存登记表只增不减**：多会话长驻会缓慢吃内存——一轮跑完就把该轮从登记表里划掉（文件已落盘，不受影响）；
+- **异常面太窄**：现在交互循环只兜「模型调用失败」一种错，工人线程里任何别的异常（比如写盘失败）会把它打死——工人内部要「任何异常都转成一条可读输出」，线程不能带着错死掉。
+
+## 7. 特殊情况
+
+- **同一会话不会被两个工人跑**：工人随会话第一次被使用而创建，终身绑定，不重复雇。
+- **闲置总结不会误伤运行中的会话**：闲置判定看的是会话文件的最后修改时间，后台会话一直在写就永远「不闲置」——这是现状就成立的好性质。
+- **进程退出**：见待拍板点 2。
+- **并发上限**：活跃工人最多 4 个，与现有配置同值、同一条环境变量可调。满了再想开新会话会被拒收并收到提示（排队味道的最简处理：拒收 + 提示，不做全局等待队列——那是最小实现之外的事）。
+
+**另外**（一句话带过）：本案不碰会话存储格式、不碰上下文压缩、不碰记忆系统，它们对多工人完全无感。
+
+## 8. 明确不做（非目标）
+
+- ❌ **打断正在跑的回合**（Codex 有打断机制，我们的最小版不做——想停就等它跑完，或直接关进程）；
+- ❌ 输入插队/转向（把新消息立刻塞进正在跑的这轮——Codex 叫 steer，不做）；
+- ❌ 会话删除、重命名、跨进程恢复运行中任务；
+- ❌ 把整个程序改成异步框架（现有全部是同步代码，牵一发动全身，与「最小」相悖）。
+
+---
+
+# Part 2 · 决策清单（流程档案，供 propose 直接引用）
+
+> Part 1 不出现代码符号；本节按 vsdd 要求带可验证来源。A=用户原话，B=代码/仓库核实，C=待用户审核拍板。
+
+## 战略与范围
 
 | # | 决策点 | 结论 | 来源 |
 | --- | --- | --- | --- |
-| D8 | change 划分 | 单个 change 打包全部范围，按 task 分波实施 | 用户原话：「生成一个 change 以及具体的实现方式，开始！然后给我 propose，先调研相关的方案」 |
-| 范围 | PRD 核心 | ReAct 循环 / 工具注册（≥3 个工具）/ LLM 输出解析 / session 隔离与持久化 / context 管理与基础压缩 / 异常处理 / trace / pytest 测试 | doc/PRD.md:8-49 |
-| D4 | 流式输出 | 纳入本 change：think/text 分离的流式管道，用户要求 demo 审核 | 用户选择：「流式输出（推荐）」；doc/my-plan.md:22「重点实现 stream 流式输出……给出一个demo代码，让我审核」 |
-| D5 | 闲置会话后台总结 | 纳入：后台协程定期扫 session 文件 mtime，超 2h 未活跃自动总结入记忆 | 用户选择：「闲置会话后台总结（推荐）」 |
-| D6 | middleware 架构骨架 | 纳入：langchain 式 bind_tools + before_model/after_model/wrap_tool_call 钩子，压缩做成 middleware | 用户选择：「middleware 架构骨架（推荐）」 |
-| D7/D18 | trace 程度 | 自研 OTel GenAI 命名对齐的 JSONL（TraceCollector + span 树）；langfuse 不进主流程 | 用户选择：「OTel 对齐 trace（推荐）」；langfuse 选项未选 |
-| D9 | 非目标 | 不做：langfuse 主流程接入、Memos 外挂后端、embedding 语义去重、多 provider 抽象、复杂压缩策略、单问单答 CLI、Web UI | 由用户各选择项排除 + doc/PRD.md:40「context 过长要有基础的压缩，复杂的压缩不用在这里实现」 |
-| D10 | PRD 提交物 | README（运行方式/系统设计/memory 召回时机与放置方式说明）+ AI Prompt 与问题解决记录 + github 链接，作为本 change 收尾 task | doc/PRD.md:51-55 + D8 单 change 推论 |
-| D11 | 真实 API 与测试的调和 | pytest 全 mock（假模型）；真实 API 走 CLI 手工验收，README 记录验收步骤，不写自动化冒烟脚本 | AGENTS.md:108「测试必须用假模型 / mock」+ doc/PRD.md:53「需要使用真实的 LLM Api」+ 用户委托确认 |
+| D1 | 目标 | 后台会话并行：A 运行中切 B，A 不停跑完；B 立即可对话；同会话内部排队串行 | 用户原话：「我跑一个回话的时候，我切换到另一个 session，这个 session 还会继续跑……然后另一个 session 中我也可以和大模型进行对话」 |
+| D2 | 规模 | 最小实现：只改交互壳，不动引擎/存储/压缩/记忆 | 用户原话：「请你给出这样的最小实现」 |
+| D3 | 流程 | explore 产方案文档 → 用户审核 → 再 propose；审核前零代码 | 用户原话：「按照 vsdd explore 的方式，给出方案，整理成为一个 md 文档，让我审核」 |
+| D4 | 参考实现 | Codex 为主（公开源码已读）；Claude Code 闭源仅作行为对照（多会话并存、切走续跑），无代码可参考 | 用户原话：「可以参考 claude code 的代码，或者 codex 的代码」+ 核实：Claude Code 无公开源码 |
+| D5 | change 划分 | 新独立 change（现有 6 个 active change 与本主题无文件交叠冲突，且均已实现或无关） | explorer 核实：`openspec/changes/` 目录现状 + 各 tasks 勾选状态 |
 
-### 选型
+## 选型（B 类，均经代码核实）
 
 | # | 决策点 | 结论 | 来源 |
 | --- | --- | --- | --- |
-| D12 | 工具调用协议 | 官方 function calling（tool_calls 结构化字段 + finish_reason="tool_calls" 作循环控制信号），不自造 ReAct 文本协议；思考模式默认开，reasoning_content 提取思考过程，消息结构持久化该字段并每轮回传 | 用户选择：「function calling + 思考开（推荐）」；调研：api-docs.deepseek.com |
-| D13 | session 持久化 | 本地 JSONL：一个会话一个文件（data/sessions/&lt;session_id&gt;.jsonl），append-only，第一行会话元数据，每行 {timestamp, ordinal, item}（Codex rollout 同款） | 用户选择：「本地 JSONL + md（推荐）」；调研：github.com/openai/codex（codex-rs/rollout） |
-| D14 | 长期记忆存储 | 本地 md 文件夹：data/memory/&lt;session_id&gt;/MEMORY.md（索引）+ 细碎 md（具体条目，frontmatter 记 hash/created/tags） | 用户选择：「本地 JSONL + md（推荐）」；用户原话 doc/my-plan.md:14「如果保持轻量的话，应该直接本地磁盘开一个文件夹……一个是 MEMORY.md，写入所有记忆的目录」 |
-| D15 | 记忆去重与更新 | 两层：写入时规范化内容 SHA-256 哈希防程序性重复；低频 LLM 合并时做 ADD/UPDATE/DELETE/NOOP 判断（mem0 四动作）；不上 embedding | 用户 Q4 选择认可 + 调研：mem0（arXiv:2504.19413）、Codex memories（github.com/openai/codex/blob/main/codex-rs/memories/README.md） |
-| D16 | 压缩策略 | AgentScope 标记法：不删消息、给被压消息打标记 + 5 字段结构化摘要（task_overview / current_state / important_discoveries（重要发现，无工具报错反思的特殊语义）/ next_steps / context_to_preserve），被压消息归档 JSONL 留全量，摘要回填上下文；工具结果进上下文截 2000 字符；不采纳参考项目的超大工具结果卸载与入参截断（非目标）<br>**2026-09-24 修订**：去掉「专收工具报错反思」表述，反思不作为独立机制 | 用户数值确认 + 调研：doc.agentscope.io（task_agent/task_memory）+ explorer 核实参考代码；修订来源：用户指令（2026-09-24） |
-| D17 | 压缩形态 | middleware：压缩检查挂 before_model 钩子，压缩失败降级告警不阻断主循环 | 用户选择 Q2 + 用户原话 doc/my-plan.md:24「关于上下文压缩做成 middleware 的形式」 |
-| D19 | LLM 客户端抽象 | 借鉴 langchain 的薄封装：invoke/stream 双入口 + bind_tools 语义 + AIMessage 结构（content / reasoning_content / tool_calls（args 为解析后 dict）/ usage）；砍 Runnable 全家桶、batch、callbacks、多 provider 抽象 | 用户原话 doc/my-plan.md:18「对于模型调用的http进行抽象，具体的话参考 langchain 的做法」+ langchain 调研 |
-| D21 | token 计数 | 双层：字符近似（≈2.5 字符/token + 消息开销）作压缩触发判断；API usage 累计进 trace（流式需 stream_options.include_usage） | 用户数值确认（第 ⑧ 项） |
-| D22 | CLI 形态 | REPL 交互式（--session 续接历史会话，支持 REPL 内部命令），不做单问单答 | 用户选择：「REPL 交互式（推荐）」 |
+| D6 | 架构模型 | 每会话一个常驻 worker 线程 + 专属输入队列（对标 Codex「会话收发循环 + 信箱」）；主线程专职读输入分拣；不引入 asyncio、全同步线程 | 参考：Codex submission_loop（codex-rs/core/src/session/handlers.rs:424-448 的 while let Ok(sub) = rx_sub.recv() 模式）；会话循环随 spawn 常驻（core/src/session/mod.rs:920-945）；本项目现状全同步（explorer 核实） |
+| D7 | 忙碌会话的新输入 | 排队串行：投入该会话队列，由其 worker 依次消费（不做 steer 插队、不做拒收）——对标 Codex pending 输入在回合结束时被收割的闭环 | 参考：Codex RegularTask 完成后继续收割 pending（core/src/tasks/regular.rs:108-124）与 InputQueue（core/src/session/input_queue.rs:87-104）；本项目约束：同会话禁并发写（src/harness/session/store.py:20-24） |
+| D8 | 输出治理 | 一把全局输出锁包住全部终端写（含流式碎片）+ 非当前会话输出带会话短 id 前缀；渲染器每会话每请求独立实例（实例含可变状态，禁跨会话共享） | explorer 核实：渲染器实例状态（src/harness/renderer.py:25、:54-66）、每输入新建的正确姿势（src/harness/__main__.py:155-157）、stdout 无锁直写（__main__.py:61-63） |
+| D9 | 切换语义 | `/switch` 仅改「输入路由目标」，不停止/不等待任何 worker | explorer 核实：/switch 现实现只改局部路由变量（src/harness/__main__.py:133-154）；会话绑定在引擎入口自治（src/harness/loop.py:77-81 ContextVar set/reset），无需任何换绑回调 |
+| D10 | 引擎与组件复用 | 全部共享单实例、零改造：引擎无可变实例状态；会话存储按文件隔离；模型客户端线程安全；上下文构建/压缩无跨请求状态；todos 状态线程隔离 | explorer 核实：src/harness/loop.py:38-58、runner.py:4-7、llm.py:127-132、builder.py:73-75、compressor.py:35-40、state.py:29-41 + 并发测试背书（tests/test_runner.py:318-353） |
+| D11 | worker 生命周期模板 | 抄闲置总结线程三件套：后台线程 + 停止开关 + 收尾 join（带超时）；与 summarizer 并存 | explorer 核实：src/harness/memory/summarizer.py:109-130、__main__.py:235/250 |
+| D12 | 并发上限 | 活跃 worker ≤ 现有 `max_concurrent_sessions`（默认 4），同一条环境变量可调；超限拒收并提示 | explorer 核实：src/harness/config.py:46-57 |
+| D13 | 异常兜底 | worker 内 any-exception → 结构化可读输出，线程不死；补追踪内存字典的锁与按轮清理 | explorer 核实：现状仅捕 LLMError（__main__.py:164-166）、_trace_sessions 只增不减（src/harness/trace.py:154-161）；先例：src/harness/runner.py:61-78 |
+| D14 | 闲置总结兼容 | 不动 summarizer：后台会话持续写文件 → 文件修改时间持续刷新 → 不会被判闲置误总结 | explorer 核实：src/harness/memory/summarizer.py:132-138 |
+| D15 | 闲置会话回锅提醒 | worker 在两单之间检测会话文件尾部是否有后台总结线程新写的「总结记录」，有则在下轮模型上下文注入一条简短提醒消息（借鉴 Codex 回合结束收割 pending 待料理输入的对应位） | 参考：Codex InputQueue 收割机制（core/src/session/input_queue.rs);本项目落点：会话 JSONL 尾部记录检测（explorer 核实 summarizer 写入路径 src/harness/memory/summarizer.py 分两阶段落盘） |
 
-### 数值/常量
+## 非目标（负面清单，防蔓延）
 
-| # | 决策点 | 结论 | 来源 |
-| --- | --- | --- | --- |
-| D36 | 单次请求 ReAct 最大轮次 | 15 | 用户选择：「全部按默认（推荐）」 |
-| D37 | 压缩 token 触发阈值 | 估算 token ≥ 100K（用户原定 80% 在 1M 窗口下永不触发，已重校准为绝对值） | 用户选择：「全部按默认（推荐）」；原倾向 doc/my-plan.md:26 |
-| D38 | 压缩轮次触发阈值 | 对话轮次 ≥ 60<br>**术语明确（2026-09-24）**：此「轮」= 会话累计的 user/assistant 对话对数，与 D36 的「单次请求决策轮」是两个不同量，全文已分别定名避免撞词 | 用户原话 doc/my-plan.md:27「另外就是对话轮次达到 60轮」+ 数值确认；术语修订来源：用户指令（2026-09-24） |
-| D40 | 闲置判定 / 扫描间隔 | 2h 未活跃判定 + 每 5 分钟扫描一轮 | 用户原话 doc/my-plan.md:14「大概 2h」+ 数值确认 |
-| D41 | LLM 超时 / 重试 | 60s / 重试 2 次 | 用户选择：「全部按默认（推荐）」 |
-| D42 | 工具执行超时 | 30s，超时错误结构化回传 LLM 决定重试 | 用户选择：「全部按默认（推荐）」 |
-| D43 | 压缩保留最近消息 | ~~20 条~~ → **最近 5 轮原文（≙ 10 条 user/assistant 消息）**，按「对话轮」边界切分并连带保留轮内工具配对消息（实际条数可多于 10） | 原「条数」口径在带工具的会话中不保证轮数（工具消息占配额）；用户 2026-09-24 裁定改按轮计、值取 10 条 |
-| D44 | 截断上限 | 工具结果进上下文截 2000 字符，归档 JSONL 留全量 | 用户选择：「全部按默认（推荐）」 |
+- 不做打断/中断正在跑的回合；不做 steer 插队；不做会话删除重命名；不做跨进程恢复；不引入 asyncio / 任何 agent 框架（AGENTS.md 禁令）。
 
-### 模型与硬事实（B 类，已核实）
+## 已拍板的 3 个小点（C 类，用户 2026-09-29 审核时选定）
 
 | # | 决策点 | 结论 | 来源 |
 | --- | --- | --- | --- |
-| D39 | 默认模型与窗口 | deepseek-flash（V4.1-Flash）；deepseek-chat / deepseek-reasoner 已于 2026-07-24 停用；现役两模型均 1M 上下文、384K 最大输出。**propose 须同步修订 AGENTS.md 主模型约定（reverse sync）** | 用户选择：「deepseek-flash（推荐）」；调研：api-docs.deepseek.com（news260424、quick_start/pricing、updates） |
-| D1 | smart-delivery-agent 参考路径 | 存在且完整可借鉴：middleware 压缩链（eviction→compaction 顺序装配）、压缩前全量归档 JSONL、摘要以 user 角色特殊标记消息回填、token 字符近似估算、溢出强制压缩兜底 | explorer 核实：D:\Users\hongze01.zhang\PycharmProjects\smart-delivery-agent\smart-delivery-agent-service\src\vip_ads_agent\agent\executor\context（compaction_middleware.py:21、conversation_compactor.py:64、compaction_config.py:133-145、session_transcript_writer.py:23 等）；agent\context 为跨会话记忆引擎（MemOS HTTP 后端，本项目不采用） |
-| D2 | openai SDK 能力 | 3.19.2；流式 delta 类型定义无 reasoning_content，但 pydantic extra="allow" 使其运行时可透传（代码用 getattr 取）；流式 usage 需 stream_options={"include_usage": true} 且在最后一个 chunk | explorer 核实：.venv\Lib\site-packages\openai\_version.py:2、types\chat\chat_completion_chunk.py:74-93、_models.py:128-130 |
-| D24 | 目录布局 | src/harness/{\_\_main\_\_,loop,llm,parser,trace}.py + tools/{base,registry,calculator,search,…}.py + session/store.py + context/{builder,compressor}.py；tests/ 与 src 镜像 | AGENTS.md:41-58 |
-| D33 | CLI 参数 | --session 已定（python -m harness --session s1）；REPL 内部命令集委托 propose | AGENTS.md:91 + 用户委托 |
-| D35 | 提示词模板 | 集中放置（具体文件/目录位置委托 propose） | AGENTS.md:73「提示词模板集中放置，不散落在业务逻辑里」 |
+| C1 | 后台会话输出怎么显示 | 实时混排显示（带短 id 前缀，所见即所得） | 用户选择：「实时混排显示」 |
+| C2 | `/exit` 退出语义 | **立刻硬退**：不等待任何正在跑的回合；worker 一律 daemon 线程，随进程直接终止；在跑回答可能丢失（会话文件如出现半行损坏，读取器自愈跳过——src/harness/session/store.py:174-199 已核实）；排队未开始的消息自然丢弃 | 用户选择：「立刻硬退」 |
+| C3 | 输出前缀格式 | `[a1b2]`（8 位会话 id 取前 4 位，一行一个标记） | 用户选择：「[a1b2] 短前缀」 |
 
-### 委托 propose 的细节（C 类，用户明确延迟决策）
-
-| # | 决策点 | 来源 |
-| --- | --- | --- |
-| D20 | 流式 think/text 分离的具体事件设计（StreamEvent 枚举、tool_calls 增量聚合器、CLI 渲染方式） | 用户延迟决策：「我让 propose 阶段定（推荐）」 |
-| D23 | 工具错误回传 JSON 具体格式（方向已定：结构化回传 LLM） | 用户延迟决策：「我让 propose 阶段定（推荐）」 |
-| D25-D32 | 命名：loop 引擎类、LLM 客户端类、parser 输出类型、BaseTool 接口、ToolRegistry、SessionStore、AgentContext 结构与字段、trace 类与事件格式 | 用户延迟决策：「我让 propose 阶段定（推荐）」 |
-| D34 | 压缩摘要消息标记与归档文件命名（参考项目 \_\_compaction\_\_summary\_\_ / sessions/{id}.jsonl 可照搬） | 用户延迟决策：「我让 propose 阶段定（推荐）」 |
-
-### 关键调研事实（供 propose 直接引用）
-
-- **DeepSeek 现役模型**：deepseek-flash / deepseek-v4-pro，1M 上下文，均支持 function calling；deepseek-flash 默认开思考模式（reasoning_effort=high），关闭需 extra_body={"thinking": {"type": "disabled"}}（openai SDK 非标准参数须走 extra_body）
-- **思考模式坑**：带 tools 的请求，每轮必须完整回传 reasoning_content（含未调工具的轮次），漏了 400；思考模式下 temperature 无效；tool_choice 只准 auto
-- **流式结构**：delta.tool_calls 每个调用首片带 id/type/function.name，后续片只带 function.arguments 增量，按 index 聚合后统一 json.loads；delta.reasoning_content 与 delta.content 分阶段流出
-- **官方警告**：function.arguments 不保证合法 JSON——parser 必须显式校验并结构化回传错误（正好落进 AGENTS.md「对外部输入显式校验」规范）
-- **工具结果回传形状**：{"role": "tool", "tool_call_id": ..., "content": ...}，与 assistant 消息的 tool_calls[].id 配对
-- **langchain 借鉴清单**：AIMessage 双层结构（标准化字段 + 原始 metadata）、invoke/stream 门面 + 私有钩子、bind_tools 语义、tool_call_id 配对、reasoning_content 双通道、middleware 钩子形状；砍除：Runnable 组合体系、batch、callbacks、多 provider 工厂、astream_events 完整事件系统
-- **AgentScope 压缩**：CompressionConfig(enable, trigger_threshold, keep_recent) + 消息打标记（COMPRESSED）+ 5 字段结构化摘要，摘要在下次压缩时链式纳入
-- **Codex 参考**：rollout JSONL（年/月/日分桶 + SessionMeta 首行 + ordinal）；memories 双阶段（逐会话抽取 → 全局合并成 MEMORY.md），按 usage_count/last_usage 淘汰
-- **trace 方案**：langfuse 自托管需 6 容器（过重）；自研 = TraceCollector + TraceExporter(Protocol) + JsonlExporter，事件字段对齐 OTel GenAI（gen_ai.operation.name / gen_ai.provider.name="deepseek" / gen_ai.usage.input_tokens / gen_ai.conversation.id=session_id / gen_ai.tool.name），trace_id 32 位 hex（W3C），落盘即树（trace_id/span_id/parent_span_id）
+> 命名（类/方法/队列类型名）与测试用例名等纯细节，由 propose 阶段给出完整表，随 proposal 一并送审。
 
 ## 客观阻塞
 
@@ -85,11 +174,7 @@
 
 ## 下一步建议
 
-1. **进入 propose**（用户已预先授权：「然后给我 propose，先调研相关的方案」——4 份调研均已完成）：建议 change 名 `build-minimal-agent-runtime`；复杂度 🔴 standard（AGENTS.md:114 已定 standard 模式，新建多模块、task 数 > 5）
-2. **propose 必做**：
-   - 修订 AGENTS.md 主模型 deepseek-chat → deepseek-flash（reverse sync，改前向用户确认）
-   - proposal.md 含非目标小节（openspec/config.yaml:39）
-   - design.md 含模块划分 + 关键数据结构 + ≥1 处被否决备选（config.yaml:48），并给出 C 类委托项（D20/D23/D25-D32/D34）的完整命名表
-   - tasks.md 每 task 含 RED/GREEN/ASSERT/DoD，RED ≥ 5 条（config.yaml:43-47）
-   - 流式 demo 审核安排：作为流式 task 的 DoD（用户要求 demo 审核，doc/my-plan.md:22）
-3. 实施顺序建议按依赖推进：core（loop/parser/tools/session）→ context（压缩/middleware）→ 流式 → trace → 记忆与闲置总结 → CLI/README 收尾
+1. **你审核本文档**：Part 1 看方案对不对味；Part 2 的 C1-C3 给结论（可直接回「C1/C2/C3 都按推荐」）；
+2. 审核通过后**进入 propose**：建议 change 名 `run-background-sessions`；复杂度 🔴 standard（新增 worker 路由与输出治理组件、跨 CLI 与运行时模块，task 数预计 4-6，AGENTS.md §8 定 standard 模式）；
+3. propose 测试策略预告：命令路由/队列语义用假 loop（现有 test_cli 模式）+ 真并发隔离用线程安全假模型（现有 test_runner 模式），全部零网络、零真实 API（AGENTS.md 禁令）；
+4. 你回复审核结论后，我会把 C1-C3 结论回写进本 handoff，再出 proposal。

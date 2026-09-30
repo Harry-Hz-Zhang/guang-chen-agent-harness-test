@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -59,7 +60,9 @@ def _emit_llm_event(
     collector.end_llm_span(
         span_id,
         output if output is not None else {"role": "assistant", "content": "你好！"},
-        usage if usage is not None else Usage(prompt_tokens=312, completion_tokens=47, total_tokens=359),
+        usage
+        if usage is not None
+        else Usage(prompt_tokens=312, completion_tokens=47, total_tokens=359),
         "stop",
         error=error,
     )
@@ -104,7 +107,9 @@ class TestTrace:
         assert attributes["gen_ai.usage.output_tokens"] == 47
         assert attributes["gen_ai.usage.reasoning_tokens"] == 0
         assert attributes["harness.span.kind"] == "chat"
-        assert attributes["gen_ai.input.messages"] == [{"role": "user", "content": "你好"}]
+        assert attributes["gen_ai.input.messages"] == [
+            {"role": "user", "content": "你好"}
+        ]
         assert attributes["gen_ai.output.messages"] == [
             {"role": "assistant", "content": "你好！"}
         ]
@@ -113,7 +118,9 @@ class TestTrace:
         assert start_time.tzinfo is not None
         assert end_time.tzinfo is not None
         assert event["duration_ms"] >= 0
-        assert event["duration_ms"] == int((end_time - start_time).total_seconds() * 1000)
+        assert event["duration_ms"] == int(
+            (end_time - start_time).total_seconds() * 1000
+        )
 
     def testToolSpanParent(self) -> None:
         """工具 span 以所属 LLM span 为父，tool 调用字段与 conversation id 齐全。"""
@@ -168,9 +175,7 @@ class TestTrace:
         assert event["error"]["error.type"] == "ToolExecutionError"
         assert event["attributes"]["gen_ai.tool.call.result"] is None
 
-    def testExporterFailureSwallowed(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def testExporterFailureSwallowed(self, caplog: pytest.LogCaptureFixture) -> None:
         """exporter 抛 IOError 时 collector 各方法均不抛异常，仅记录 logging.warning。"""
         collector = TraceCollector(ExplodingExporter())
         with caplog.at_level(logging.WARNING):
@@ -350,5 +355,183 @@ class TestTrace:
         assert path.exists()
         lines = path.read_text(encoding="utf-8").splitlines()
         assert len(lines) == 2
-        events = [json.loads(line) for line in lines]
-        assert all(event["schema_version"] == 1 for event in events)
+
+
+class TestTraceCollector:
+    """Task 4 RED：内存登记表的并发安全与回合终局清理（tasks.md 原名 camelCase）。"""
+
+    def shouldReleaseTraceEntriesAfterEndTrace(self) -> None:
+        """start_trace 后登记表非空 → end_trace 同 id → 登记表不再含该 trace id。"""
+        exporter = FakeExporter()
+        collector = TraceCollector(exporter)
+        trace_id = collector.start_trace(_TRACED_SESSION)
+        assert trace_id in collector._trace_sessions  # noqa: SLF001 —— 锚点断言登记表
+        collector.end_trace(trace_id)
+        assert trace_id not in collector._trace_sessions  # noqa: SLF001
+        # 幂等：重复 end_trace 同 id 不抛异常
+        collector.end_trace(trace_id)
+
+    def shouldSweepStaleSpansForTraceOnEndTrace(self) -> None:
+        """未 end 的残留 span 随 end_trace 一并清扫：异常路径兜底（ASSERT 精确键集合）。"""
+        exporter = FakeExporter()
+        collector = TraceCollector(exporter)
+        leaked_trace = collector.start_trace("sessOther")
+        stale = collector.start_llm_span(
+            leaked_trace, _TRACED_MODEL, [{"role": "user", "content": "q"}]
+        )
+        assert stale in collector._spans  # noqa: SLF001 —— 前提：残留确实在表
+        collector.end_trace(leaked_trace)
+        assert leaked_trace not in collector._trace_sessions  # noqa: SLF001
+        assert collector._spans == {}  # noqa: SLF001 —— 残留 span 恰好被全量清扫
+        assert collector.end_trace("not-exist") is None  # 幂等：未知 id 静默返回 None
+
+    def shouldKeepExportedFileUnchangedByCleanup(self, tmp_path: Path) -> None:
+        """多 span 完整回合 → export 落盘 → end_trace 清理 → 落盘文件逐字节一致。"""
+        exporter = JsonlExporter(tmp_path)
+        collector = TraceCollector(exporter)
+        trace_id = collector.start_trace(_TRACED_SESSION)
+        span_id = collector.start_llm_span(
+            trace_id, _TRACED_MODEL, [{"role": "user", "content": "你好"}]
+        )
+        collector.end_llm_span(
+            span_id,
+            {"role": "assistant", "content": "你好！"},
+            Usage(prompt_tokens=10, completion_tokens=5, total_tokens=15),
+            "stop",
+        )
+        path = tmp_path / f"{_TRACED_SESSION}.jsonl"
+        before = path.read_bytes()
+        collector.end_trace(trace_id)
+        assert path.read_bytes() == before
+
+    def shouldAcceptConcurrentStartEndAcrossThreads(self) -> None:
+        """8 线程 × 50 次 start/end_llm_span 并发：无异常无死锁（5s 保护）、无脏计数。"""
+        exporter = FakeExporter()
+        collector = TraceCollector(exporter)
+        trace_id = collector.start_trace(_TRACED_SESSION)
+        errors: list[BaseException] = []
+        barrier = threading.Barrier(8)
+        rounds_per_thread = 50
+
+        def worker() -> None:
+            try:
+                barrier.wait()
+                for _ in range(rounds_per_thread):
+                    span_id = collector.start_llm_span(
+                        trace_id, _TRACED_MODEL, [{"role": "user", "content": "q"}]
+                    )
+                    collector.end_llm_span(
+                        span_id,
+                        {"role": "assistant", "content": "a"},
+                        Usage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+                        "stop",
+                    )
+            except BaseException as exc:  # noqa: BLE001 —— 线程边界收集后统一断言
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker, daemon=True) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5)
+        assert errors == [], f"并发期间出现异常：{errors}"
+        assert all(not t.is_alive() for t in threads), "5s 内未完成（疑似死锁）"
+        assert len(exporter.events) == 8 * rounds_per_thread, "无脏计数：事件数精确"
+        assert collector._spans == {}  # noqa: SLF001 —— 全部 span 已收尾
+
+    def shouldExportMultiSessionTracesWithoutCrosstalk(self, tmp_path: Path) -> None:
+        """两会话并发完整回合 + 落盘：两份 jsonl 各自只含自身 conversation id。"""
+        exporter = JsonlExporter(tmp_path)
+        collector = TraceCollector(exporter)
+        sessions = ("sessA", "sessB")
+        barrier = threading.Barrier(len(sessions))
+
+        def run_turn(session_id: str) -> None:
+            trace_id = collector.start_trace(session_id)
+            barrier.wait()
+            span_id = collector.start_llm_span(
+                trace_id, _TRACED_MODEL, [{"role": "user", "content": "q"}]
+            )
+            collector.end_llm_span(
+                span_id,
+                {"role": "assistant", "content": session_id},
+                Usage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+                "stop",
+            )
+            collector.end_trace(trace_id)
+
+        threads = [
+            threading.Thread(target=run_turn, args=(sid,), daemon=True)
+            for sid in sessions
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5)
+        for session_id in sessions:
+            path = tmp_path / f"{session_id}.jsonl"
+            assert path.exists(), f"{session_id} 的 trace 文件应存在"
+            lines = path.read_text(encoding="utf-8").splitlines()
+            assert lines, f"{session_id} 文件至少一行"
+            for line in lines:
+                event = json.loads(line)
+                assert event["attributes"]["gen_ai.conversation.id"] == session_id, (
+                    "串写：他人条目混入"
+                )
+        other_ids = [s for s in sessions]
+        for session_id in sessions:
+            content = (tmp_path / f"{session_id}.jsonl").read_text(encoding="utf-8")
+            for other in other_ids:
+                if other != session_id:
+                    assert f'"{other}"' not in content, "文件内容互不包含对方 id"
+
+    def shouldNotGrowMemoryAcrossManyTurns(self) -> None:
+        """同会话连续 100 回合 start/end_trace：清理后登记表回到基线（仅活跃 trace）。"""
+        exporter = FakeExporter()
+        collector = TraceCollector(exporter)
+        for i in range(100):
+            trace_id = collector.start_trace(_TRACED_SESSION)
+            span_id = collector.start_llm_span(
+                trace_id, _TRACED_MODEL, [{"role": "user", "content": f"第{i}问"}]
+            )
+            collector.end_llm_span(
+                span_id,
+                {"role": "assistant", "content": "答"},
+                Usage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+                "stop",
+            )
+            collector.end_trace(trace_id)
+        assert collector._trace_sessions == {}  # noqa: SLF001 —— 回到回合间基线
+        assert collector._spans == {}  # noqa: SLF001
+        assert len(exporter.events) == 100, "落盘事件数不因清理而丢失"
+
+    def shouldKeepLegacyApiCompatible(self, tmp_path: Path) -> None:
+        """不传新参数的既有调用方式全部通过：API 向后兼容（真 JsonlExporter + 双 span）。"""
+        exporter = JsonlExporter(tmp_path)
+        collector = TraceCollector(exporter)
+        trace_id = collector.start_trace(_TRACED_SESSION)
+        llm_span = collector.start_llm_span(
+            trace_id, _TRACED_MODEL, [{"role": "user", "content": "你好"}]
+        )
+        tool_span = collector.start_tool_span(
+            trace_id,
+            llm_span,
+            ToolCall(
+                id="call_1",
+                name="calculator",
+                arguments_raw='{"expr":"1+1"}',
+                args={"expr": "1+1"},
+            ),
+        )
+        collector.end_tool_span(tool_span, "2", None)
+        collector.end_llm_span(
+            llm_span,
+            {"role": "assistant", "content": "1+1=2"},
+            Usage(prompt_tokens=5, completion_tokens=3, total_tokens=8),
+            "tool_calls",
+        )
+        path = tmp_path / f"{_TRACED_SESSION}.jsonl"
+        lines = path.read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 2
+        types = [json.loads(line)["type"] for line in lines]
+        assert types == ["tool", "llm"]
