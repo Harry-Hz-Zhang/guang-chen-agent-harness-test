@@ -275,3 +275,10 @@ spec 合规审查确认：10/10 RED 原名实在；主循环仅 router.submit + 
 | 验证点核实 | loop.py `_run`（:83-）开头 `start_trace(session_id)` 产生 trace_id，但全函数无 end_trace/清理调用（grep end_trace 全仓 0 hit）——design §2.5 预设的「loop 未在回合终局清理」情况**成立**，且 start_trace 里 `_trace_sessions[trace_id] = session_id` 永不过期，再叠加并发 worker 后每回合泄漏一条映射 |
 | Reverse Sync ⑥ | 依 design §2.5 既有预案条款（propose 阶段 design review 已裁定，无需回改 artifacts）：TraceCollector 新增 `end_trace(trace_id)` 方法（锁内从 `_trace_sessions` 与 `_spans` 清除该 trace 的全部条目）；loop.py `_run` 的 `finally` 补 `self._trace.end_trace(trace_id)` 调用，修改 ≤5 行 |
 | 契约兼容 | end_trace 幂等（不存在的 trace_id 静默返回）；span 通常已在 end_*_span 中被 pop，残留（异常路径）由 end_trace 一并收尾 |
+
+## 2026-10-01 追记（后续减法裁决）
+
+| 事件 | 说明 |
+| --- | --- |
+| runner.py 移除 | 用户于 2026-10-01 死代码审计后拍板：`ConcurrentRunner`（runner.py）生产零引用（并发入口已由 SessionRouter 兑现），整模块连同 tests/test_runner.py 删除。proposal「不改动 ConcurrentRunner」条款就此作废，本 log 备注替代。 |
+| state.py 移除 | 同批裁决：`RuntimeState` / `CURRENT_SESSION_ID`（state.py）为「只写不读」断头路（write_todos 写入后无生产消费方），连同绑定机制删除；write_todos 改为无状态「校验+渲染」工具，待办经会话文件历史（role=tool 消息）由 LLM 读取。 |

@@ -4,6 +4,7 @@
 > 主题：会话 A 运行中切换到会话 B，A 继续在后台跑完；B 立即可对话。
 > 前置 handoff（build-minimal-agent-runtime，2026-09-24）已消费，其 change 已实现；本文件为最新真源。
 > **本方案未经你审核前不写任何代码。**
+> ⚠️ 2026-10-01 失效备注：文内引用的 `runner.py` / `state.py` / `CURRENT_SESSION_ID` 绑定（D9/D10/D13 等行）已在后续死代码清理中移除，并发入口由 `sessionworker.SessionRouter` 兑现；本文仅作历史记录保留。
 
 ---
 

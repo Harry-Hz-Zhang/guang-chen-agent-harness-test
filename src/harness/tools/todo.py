@@ -1,10 +1,9 @@
-"""WriteTodosTool —— 全量替换写入当前会话待办清单的工具（内存态、会话隔离）。"""
+"""WriteTodosTool —— 待办清单写入工具（无状态：校验 + 渲染）。"""
 
 from __future__ import annotations
 
 from typing import Any
 
-from harness.state import CURRENT_SESSION_ID, RuntimeState
 from harness.tools.base import BaseTool, ToolExecutionError
 
 _STATUS_LABELS: dict[str, str] = {
@@ -17,12 +16,12 @@ _MAX_CONTENT_CHARS: int = 1000
 
 
 class WriteTodosTool(BaseTool):
-    """待办写入工具：接收完整列表并全量替换当前会话的待办。
+    """待办写入工具：接收完整列表，校验后渲染为文本回传。
 
-    会话 id 取自运行时上下文（CURRENT_SESSION_ID，由主循环绑定），
-    工具自身无状态、单实例可被多会话并发共享；数据落在注入的
-    RuntimeState 中，按会话隔离、不落盘。todos 为整张计划清单：执行
-    多步任务前先写入计划，过程中随进度更新各条 status。
+    工具自身无状态：不落内存也不落盘，渲染文本以 role=tool 消息
+    落入会话文件历史，LLM 在后续轮次经上下文读到待办。todos 为
+    整张计划清单：执行多步任务前先写入计划，过程中随进度更新
+    各条 status。
     """
 
     name: str = "write_todos"
@@ -54,21 +53,9 @@ class WriteTodosTool(BaseTool):
         "required": ["todos"],
     }
 
-    def __init__(self, state: RuntimeState) -> None:
-        """注入公共运行时状态；待办按当前上下文会话写入 state。"""
-        self._state = state
-
     def execute(self, **kwargs: Any) -> str:
-        """校验并全量替换当前会话的待办，返回带编号与状态的渲染文本。"""
-        session_id = CURRENT_SESSION_ID.get()
-        if not session_id:
-            raise ToolExecutionError(
-                "write_todos 需要会话上下文（主循环未绑定当前会话）",
-                tool=self.name,
-                tool_args=kwargs,
-            )
+        """校验待办列表并渲染为带编号与状态的文本。"""
         todos = self._validate(kwargs.get("todos"))
-        self._state.set_todos(session_id, todos)
         return self._render(todos)
 
     def _validate(self, todos: Any) -> list[dict]:

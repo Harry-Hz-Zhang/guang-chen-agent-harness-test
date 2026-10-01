@@ -8,7 +8,6 @@ spec agent-loop「工具参数显式校验」逐条对应。
 from harness.llm import AIMessage, ToolCall
 from harness.parser import (
     FinalAnswer,
-    ToolArgumentError,
     ToolCallBatch,
     parse_response,
     validate_arguments,
@@ -97,9 +96,3 @@ class TestParser:
             "properties": {"city": {"type": "string"}},
         }
         assert validate_arguments(call, schema) == []
-
-    def testToolArgumentErrorCarriesContext(self) -> None:
-        """ToolArgumentError 携带 tool_call_id，str() 为原始消息。"""
-        exc = ToolArgumentError("缺少必填字段 city", "call_9")
-        assert exc.tool_call_id == "call_9"
-        assert str(exc) == "缺少必填字段 city"

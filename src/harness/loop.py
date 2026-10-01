@@ -19,7 +19,6 @@ from harness.config import RuntimeConfig
 from harness.llm import AIMessage, StreamEvent, ToolCall, Usage, collect_stream
 from harness.middleware import LoopState, Middleware
 from harness.parser import FinalAnswer, parse_response, validate_arguments
-from harness.state import CURRENT_SESSION_ID
 from harness.tools.registry import ToolNotFoundError
 
 _TRUNCATED_ANSWER = "已达单次请求最大轮次（{max_rounds}），本次请求就此终止。"
@@ -69,16 +68,8 @@ class ReactLoop:
         输入（由 build 追加到请求末尾），build 完成后立刻把 user 消息
         落库（LLM 调用前，实时持久化）；后续轮 build 传空串（历史已含
         当前输入，不再重复追加）。
-
-        入口把 session_id 绑定到运行时上下文（ContextVar，协程/线程
-        各自隔离）并在出口复位：多个 agent 在不同线程/协程同时执行
-        时，有状态工具据此读到各自会话的数据。
         """
-        token = CURRENT_SESSION_ID.set(session_id)
-        try:
-            return self._run(user_input, session_id, on_event)
-        finally:
-            CURRENT_SESSION_ID.reset(token)
+        return self._run(user_input, session_id, on_event)
 
     def _run(
         self,
@@ -86,7 +77,7 @@ class ReactLoop:
         session_id: str,
         on_event: Callable[[StreamEvent], None] | None = None,
     ) -> LoopResult:
-        """决策循环主体（run 已完成会话上下文绑定）。
+        """决策循环主体。
 
         trace 登记在 finally 里收尾：正常答案、截断与异常路径都经
         end_trace 清理内存登记表（reverse-sync ⑥，落盘文件不受影响）。

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from harness.llm import DoneEvent, ReasoningDelta, TextDelta, UsageEvent
-from harness.renderer import StreamRenderer, render_event
+from harness.renderer import StreamRenderer
 
 
 class _RawWriterStub:
@@ -80,21 +80,3 @@ class TestStreamRenderer:
         renderer_active.render(TextDelta(text="回答"))
         assert renderer_active.finalize() == "\n"
         assert raw_active.pieces == ["回答", "\n"]
-
-    def testResetClearsState(self) -> None:
-        """调用 reset() 后内部状态复位，下一轮思考重新输出前缀。"""
-        renderer = StreamRenderer()
-        renderer.render(ReasoningDelta(text="第一轮思考"))
-        renderer.finalize()
-        renderer.reset()
-        out = renderer.render(ReasoningDelta(text="第二轮思考"))
-        assert out == "思考｜第二轮思考"
-
-    def testStatelessRenderEventHelper(self) -> None:
-        """独立纯函数 render_event 向后兼容测试。"""
-        reasoning = render_event(ReasoningDelta(text="思"))
-        assert "思" in reasoning
-        assert "思考" in reasoning
-        text = render_event(TextDelta(text="答"))
-        assert "答" in text
-        assert "思考" not in text

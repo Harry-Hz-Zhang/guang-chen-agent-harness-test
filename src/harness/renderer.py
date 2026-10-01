@@ -66,23 +66,3 @@ class StreamRenderer:
                 self._raw_writer("\n")
             return "\n"
         return ""
-
-    def reset(self) -> None:
-        """重置状态机，供下一轮交互使用。"""
-        self.in_reasoning = False
-        self.streamed_any = False
-
-
-def render_event(
-    event: StreamEvent,
-    prefix: str = DEFAULT_REASONING_PREFIX,
-) -> str:
-    """把单个流式事件渲染为终端文本（纯函数向后兼容接口）。
-
-    思考内容与正文分通道：思考行带前缀，正文行不带前缀。
-    """
-    if isinstance(event, ReasoningDelta):
-        return f"{prefix}{event.text}"
-    if isinstance(event, TextDelta):
-        return event.text
-    return ""

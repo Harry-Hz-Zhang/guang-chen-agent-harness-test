@@ -1,7 +1,6 @@
 """ReactLoop 的单元测试（全 FakeLLM，零网络，tmp 目录存储）。"""
 
 import json
-import threading
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -12,11 +11,9 @@ from harness.llm import AIMessage, ToolCall
 from harness.loop import ReactLoop
 from harness.middleware import LoopState, Middleware
 from harness.session.store import SessionStore
-from harness.state import CURRENT_SESSION_ID, RuntimeState
 from harness.tools.base import BaseTool
 from harness.tools.calculator import CalculatorTool
 from harness.tools.registry import ToolRegistry
-from harness.tools.todo import WriteTodosTool
 from harness.tools.weather import WeatherTool
 
 
@@ -496,80 +493,3 @@ class TestReactLoop:
         assert len(llm.stream_calls) == 1
         assert len(received) == 1
         assert received[0].text == "流式回答"
-
-
-class TestSessionContext:
-    """覆盖主循环的会话上下文绑定与多线程同时执行隔离。"""
-
-    def testSessionContextBoundDuringToolExecution(self, tmp_path: Path) -> None:
-        """工具执行期间读到主循环绑定的会话 id，run 结束后上下文复位。"""
-        captured: list[str] = []
-
-        class _CaptureTool(BaseTool):
-            """记录执行时上下文会话 id 的测试工具。"""
-
-            name = "capture"
-            description = "捕获当前会话上下文的测试工具"
-            parameters: dict[str, Any] = {"type": "object", "properties": {}, "required": []}
-
-            def execute(self, **kwargs: Any) -> str:
-                """记录当前上下文绑定的会话 id。"""
-                captured.append(CURRENT_SESSION_ID.get())
-                return "ok"
-
-        registry = ToolRegistry()
-        registry.register(_CaptureTool())
-        call = ToolCall(id="call_ctx", name="capture", arguments_raw="{}", args={})
-        loop, llm, _ = _make_loop(
-            tmp_path,
-            [AIMessage(content="", tool_calls=[call]), AIMessage(content="完成")],
-            registry=registry,
-        )
-        result = loop.run("你好", "s-ctx")
-        assert result.answer == "完成"
-        assert captured == ["s-ctx"]
-        assert CURRENT_SESSION_ID.get() == ""
-
-    def testConcurrentRunsIsolated(self, tmp_path: Path) -> None:
-        """双线程同时运行两个会话（一个 agent 一个线程），todos 按会话隔离。"""
-        state = RuntimeState()
-        registry = ToolRegistry()
-        registry.register(WriteTodosTool(state))
-        results: dict[str, Any] = {}
-        errors: list[str] = []
-
-        def _agent(session_id: str, marker: str) -> None:
-            """一个 agent（线程）：独立 loop 与 LLM 脚本，共享工具与公共状态。"""
-            try:
-                todos = [{"content": f"任务{marker}", "status": "in_progress"}]
-                call = ToolCall(
-                    id=f"call_{session_id}",
-                    name="write_todos",
-                    arguments_raw=json.dumps({"todos": todos}, ensure_ascii=False),
-                    args={"todos": todos},
-                )
-                loop, _, _ = _make_loop(
-                    tmp_path,
-                    [
-                        AIMessage(content="", tool_calls=[call]),
-                        AIMessage(content=f"完成{marker}"),
-                    ],
-                    registry=registry,
-                )
-                results[session_id] = loop.run("记录待办", session_id)
-            except Exception as exc:
-                errors.append(f"{session_id}: {exc}")
-
-        threads = [
-            threading.Thread(target=_agent, args=("s-A", "A")),
-            threading.Thread(target=_agent, args=("s-B", "B")),
-        ]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join()
-        assert errors == []
-        assert results["s-A"].answer == "完成A"
-        assert results["s-B"].answer == "完成B"
-        assert [t["content"] for t in state.todos("s-A")] == ["任务A"]
-        assert [t["content"] for t in state.todos("s-B")] == ["任务B"]

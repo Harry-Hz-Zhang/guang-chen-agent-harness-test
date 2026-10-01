@@ -46,7 +46,6 @@ src/harness/            核心 runtime
   prompts.py            提示词模板集中放置
   loop.py               ReAct 主循环 + 单次请求决策轮上限
   middleware.py         中间件基类
-  runner.py             单进程多会话并发（线程池批量执行，可编程入口）
   llm.py                模型客户端封装
   parser.py             LLM 输出解析（思考 / 工具调用 / 最终答案）
   tools/
@@ -64,7 +63,6 @@ src/harness/            核心 runtime
     store.py            长期记忆
     summarizer.py       闲置总结
   renderer.py           流式终端渲染器（思考/正文分通道状态机）
-  state.py              进程级公共内存状态（会话隔离 + 并发绑定）
   trace.py              工具调用 trace 与日志
 tests/                  pytest 测试（与 src 镜像）
 openspec/               VSDD/OpenSpec artifacts（方案真源）

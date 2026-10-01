@@ -32,19 +32,6 @@ class ToolCallBatch:
 AgentDecision = FinalAnswer | ToolCallBatch
 
 
-class ToolArgumentError(Exception):
-    """工具参数校验失败的异常载体（含 tool_call_id 与原因）。
-
-    validate_arguments 本身返回错误列表不抛异常；调用方（loop 层）
-    需要以异常形式上抛时使用本类。
-    """
-
-    def __init__(self, message: str, tool_call_id: str) -> None:
-        """记录错误消息与对应工具调用 id，str(exc) 即错误消息。"""
-        super().__init__(message)
-        self.tool_call_id = tool_call_id
-
-
 def parse_response(message: AIMessage) -> AgentDecision:
     """把 LLM 单次返回解析为决策：有工具调用走批次，否则为最终答案。
 

@@ -18,12 +18,11 @@ from harness.loop import LoopResult
 
 class TestRegistryAssembly:
     def testRegistryIncludesReadMemory(self, tmp_path: Path) -> None:
-        """_build_registry 注册五个内置工具（read_memory 绑定记忆、write_todos 绑定公共状态）。"""
+        """_build_registry 注册五个内置工具（read_memory 绑定记忆）。"""
         from harness.__main__ import _build_registry
         from harness.memory.store import MemoryStore
-        from harness.state import RuntimeState
 
-        registry = _build_registry(MemoryStore(tmp_path), RuntimeState())
+        registry = _build_registry(MemoryStore(tmp_path))
         names = registry.names()
         assert "read_memory" in names
         assert "calculator" in names
@@ -389,19 +388,6 @@ class TestCli:
         writer = _Writer()
         code = cli.main(["--session", "s1"], ["/exit"], writer)
         assert code == 0
-
-
-class TestRender:
-    def testStreamEventRendering(self) -> None:
-        """思考与正文分通道渲染：思考行含前缀，正文行不含。"""
-        from harness.renderer import render_event
-
-        reasoning = render_event(ReasoningDelta(text="思"))
-        assert "思" in reasoning
-        assert "思考" in reasoning
-        text = render_event(TextDelta(text="答"))
-        assert "答" in text
-        assert "思考" not in text
 
 
 class TestStreamRendering:

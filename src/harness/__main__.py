@@ -35,7 +35,6 @@ from harness.outputmux import OutputMux
 from harness.renderer import DEFAULT_REASONING_PREFIX, StreamRenderer
 from harness.session.store import SessionStore
 from harness.sessionworker import SessionRouter
-from harness.state import RuntimeState
 from harness.tools.calculator import CalculatorTool
 from harness.tools.read_memory import ReadMemoryTool
 from harness.tools.registry import ToolRegistry
@@ -258,14 +257,14 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _build_registry(memory: MemoryStore, state: RuntimeState) -> ToolRegistry:
-    """注册五个内置工具（read_memory 绑定全局记忆、write_todos 绑定会话隔离的公共状态）。"""
+def _build_registry(memory: MemoryStore) -> ToolRegistry:
+    """注册五个内置工具（read_memory 绑定全局记忆）。"""
     registry = ToolRegistry()
     registry.register(CalculatorTool())
     registry.register(SearchTool())
     registry.register(WeatherTool())
     registry.register(ReadMemoryTool(memory))
-    registry.register(WriteTodosTool(state))
+    registry.register(WriteTodosTool())
     return registry
 
 
@@ -299,8 +298,7 @@ def main(
     sessions = SessionStore(config.data_dir)
     memory = MemoryStore(config.data_dir)
     builder = ContextBuilder(sessions, memory, config)
-    state = RuntimeState()
-    registry = _build_registry(memory, state)
+    registry = _build_registry(memory)
     trace = TraceCollector(JsonlExporter(config.data_dir / "traces"))
     compressor = ContextCompressor(sessions, llm, trace, config)
     middlewares: list[Middleware] = [CompactionMiddleware(compressor)]

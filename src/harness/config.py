@@ -36,8 +36,8 @@ class RuntimeConfig:
     为超长压缩触发与保留参数；idle_seconds / scan_interval_seconds
     为闲置会话总结参数；llm_* 为 LLM 调用超时与重试参数；
     tool_result_max_chars 为工具结果进上下文的截断长度；
-    max_concurrent_sessions 为并发批次（ConcurrentRunner）的线程池
-    上限；data_dir 为运行期产物（会话/记忆/trace）根目录。
+    max_concurrent_sessions 为 SessionRouter 后台会话的并发上限；
+    data_dir 为运行期产物（会话/记忆/trace）根目录。
     """
 
     model: str = DEFAULT_MODEL
